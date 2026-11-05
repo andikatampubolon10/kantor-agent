@@ -3,3 +3,6 @@ node_modules/
 *.log
 # data runtime tidak pernah ada di repo (disimpan di ~/.cache/kantor-agent/)
 .cache/
+cloudflared.exe
+.wa-assistant-session.json
+fonnte-qr.png
