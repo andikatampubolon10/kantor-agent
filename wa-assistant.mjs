@@ -107,8 +107,28 @@ function saveSession(conversationId) {
   }
 }
 
-// Kirim pesan ke WhatsApp via Fonnte (Mendukung nomor pribadi & ID grup)
-async function sendWhatsApp(target, message) {
+// Sync daftar grup WhatsApp di server Fonnte
+async function syncFonnteGroups() {
+  if (!FONNTE_TOKEN) return false;
+  try {
+    console.log('[Fonnte API] Menyinkronkan daftar grup WhatsApp...');
+    const res = await fetch('https://api.fonnte.com/fetch-group', {
+      method: 'POST',
+      headers: { 'Authorization': FONNTE_TOKEN }
+    });
+    const data = await res.json();
+    if (data.status) {
+      console.log('[Fonnte API] ✅ Sinkronisasi grup WhatsApp selesai.');
+      return true;
+    }
+  } catch (err) {
+    console.error('[Fonnte API] Gagal sync grup:', err.message);
+  }
+  return false;
+}
+
+// Kirim pesan ke WhatsApp via Fonnte (Mendukung nomor pribadi & ID grup dengan auto-retry)
+async function sendWhatsApp(target, message, isRetry = false) {
   if (!FONNTE_TOKEN) {
     console.log('[WA] Token tidak tersedia. Pesan tidak dikirim:', message);
     return false;
@@ -132,6 +152,15 @@ async function sendWhatsApp(target, message) {
       return true;
     } else {
       console.error(`[WA] ⚠️ Gagal kirim ke target ${target}:`, data.reason || JSON.stringify(data));
+
+      // Jika error invalid group id, lakukan sync group list dan coba kirim ulang 1x
+      if (!isRetry && data.reason?.toLowerCase().includes('invalid group id')) {
+        console.log(`[WA] 🔄 Terdeteksi 'invalid group id'. Menyinkronkan daftar grup Fonnte lalu mencoba kirim ulang...`);
+        await syncFonnteGroups();
+        await new Promise(r => setTimeout(r, 2000));
+        return await sendWhatsApp(target, message, true);
+      }
+
       return false;
     }
   } catch (err) {
@@ -273,7 +302,7 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
     let promptContext = '';
     if (isGroup) {
       if (isOwner) {
-        promptContext = `[Pesan di Grup WhatsApp dari Owner (${senderName})]: "${userPrompt}"\n(PENTING: Jawab langsung ke ${senderName} di grup dengan ramah dan santai. Anda boleh mengeksekusi kode atau perintah file jika diminta).`;
+        promptContext = `[Pesan di Grup WhatsApp dari Owner (${senderName})]: "${userPrompt}"\n(PENTING: Jawab langsung ke ${senderName} di grup dengan ramah, santai, dan jelas. Anda boleh mengeksekusi kode atau perintah file jika diminta).`;
       } else {
         promptContext = `[Pesan di Grup WhatsApp dari Anggota Grup (${senderName})]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
       }
@@ -483,6 +512,9 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`👥 Mode Grup: AKTIF (Trigger: !bot, !ai, @bot)`);
   console.log(`🤖 Model: Gemini Flash via Antigravity CLI`);
   console.log(`====================================================`);
+
+  // Sinkronkan daftar grup Fonnte saat startup
+  await syncFonnteGroups();
 
   // Mulai Cloudflare Tunnel
   if (fs.existsSync(CLOUDFLARED_PATH)) {
