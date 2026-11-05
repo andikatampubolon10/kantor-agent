@@ -16,6 +16,16 @@ const BRAIN_DIR = 'C:\\Users\\andik\\.gemini\\antigravity\\brain';
 const CLOUDFLARED_PATH = path.join(process.cwd(), 'cloudflared.exe');
 const SESSION_FILE = path.join(process.cwd(), '.wa-assistant-session.json');
 
+// Persona sistem untuk gaya bahasa manusiawi & natural di WhatsApp
+const SYSTEM_PERSONA = `Peran Anda: Anda adalah asisten pribadi WhatsApp untuk Andika.
+Prinsip gaya bicara:
+1. Berbicaralah santai, ramah, sopan, dan natural seperti rekan kerja atau asisten pribadi manusia di WhatsApp.
+2. Langsung berikan inti jawaban atau konfirmasi tindakan yang diminta, tanpa basa-basi robot/agen.
+3. JANGAN PERNAH menggunakan tool send_message. Langsung berikan jawaban dalam teks respon akhir Anda.
+4. JANGAN PERNAH menyertakan pesan meta atau format robot seperti "Pesan dari agen ... telah dibalas", "Recipient", atau ID teknis sistem.
+5. Jika ditanya soal sisa token atau kuota, jelaskan dengan santai bahwa kapasitas konteks obrolan sangat longgar (hingga 1-2 juta token) dan saat ini baru terpakai sangat sedikit. Kuota pesan WhatsApp di Fonnte juga masih aman (~990+ pesan gratis).
+6. Jika diminta membuat file, menjalankan skrip, atau memeriksa sesuatu di komputer, gunakan tool yang tersedia (write_file, run_command, dll.), lalu konfirmasi hasilnya secara santai dan jelas kepada Andika.`;
+
 // Nomor WhatsApp yang diizinkan mengontrol Antigravity
 const AUTHORIZED_TARGETS = new Set([
   '6282163850914',
@@ -23,29 +33,55 @@ const AUTHORIZED_TARGETS = new Set([
   ...(process.env.AUTHORIZED_TARGETS ? process.env.AUTHORIZED_TARGETS.split(',').map(s => s.trim()) : [])
 ]);
 
-// Anti loop hash tracker
+// Anti loop tracker
 const sentMessageHashes = new Set();
 function markSent(msg) {
   if (!msg) return;
-  const snippet = msg.slice(0, 60);
+  const clean = msg.replace(/\s*>*\s*_?Sent via fonnte\.com_?/gi, '').trim();
+  const snippet = clean.slice(0, 50);
   sentMessageHashes.add(snippet);
-  setTimeout(() => sentMessageHashes.delete(snippet), 120000);
+  setTimeout(() => sentMessageHashes.delete(snippet), 180000);
 }
 
 function isOurOwnMessage(msg) {
   if (!msg) return false;
-  const prefixes = ['🤖', '⏳', '🚀', '🔔', '🔄', '📋', '🟢', '⚠️'];
-  if (prefixes.some(p => msg.startsWith(p))) return true;
-  return sentMessageHashes.has(msg.slice(0, 60));
+  // Deteksi otomatis jika pesan mengandung watermark Fonnte
+  if (/fonnte\.com/i.test(msg) || /sent via/i.test(msg)) {
+    return true;
+  }
+  const clean = msg.replace(/\s*>*\s*_?Sent via fonnte\.com_?/gi, '').trim();
+  const snippet = clean.slice(0, 50);
+  return sentMessageHashes.has(snippet);
 }
 
 // Format teks markdown agar rapi di WhatsApp
 function formatForWhatsApp(text) {
   if (!text) return '';
   return text
-    .replace(/\*\*(.*?)\*\*/g, '*$1*') // Bold
-    .replace(/^#{1,6}\s+(.*)$/gm, '*$1*') // Headers to bold
+    .replace(/\*\*(.*?)\*\*/g, '*$1*') // Bold **text** -> *text*
+    .replace(/^#{1,6}\s+(.*)$/gm, '*$1*') // Headers -> bold
     .trim();
+}
+
+// Deteksi apakah teks merupakan laporan meta internal agen
+function isAgentMetaMessage(text) {
+  if (!text) return false;
+  return /pesan dari agen/i.test(text) ||
+         /pesan telah dikirim ke/i.test(text) ||
+         /telah dibalas dengan jawaban/i.test(text) ||
+         /membalas pesan agen/i.test(text) ||
+         /message sent to/i.test(text);
+}
+
+// Bersihkan respons agar murni seperti jawaban manusia
+function cleanHumanResponse(text) {
+  if (!text) return '';
+  let cleaned = text
+    .replace(/^Pesan dari agen\s*\([^)]+\)\s*(mengenai[^:]+)?\s*(telah dibalas|dibalas):?\s*/i, '')
+    .replace(/^Pesan telah dikirim ke\s*[^.]+\.?\s*/i, '')
+    .replace(/^Membalas pesan agen\s*[^:]+:?\s*/i, '')
+    .trim();
+  return formatForWhatsApp(cleaned);
 }
 
 // Session helper
@@ -150,14 +186,15 @@ function readTranscript(conversationId) {
   }
 }
 
-// Tunggu hingga Antigravity selesai mengeksekusi dan memberikan balasan akhir
+// Tunggu hingga Antigravity selesai mengeksekusi dan mengambil respons
 async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitMs = 180000) {
-  const pollInterval = 1500;
+  const pollInterval = 1200;
   const startTime = Date.now();
   let candidateStepIndex = -1;
   let candidateContent = null;
+  let capturedSendMessage = null;
 
-  console.log(`[Agent] Menunggu eksekusi untuk percakapan ${conversationId} (mulai index ${startStepIndex})...`);
+  console.log(`[Agent] Menunggu respons untuk percakapan ${conversationId} (mulai index ${startStepIndex})...`);
 
   while (Date.now() - startTime < maxWaitMs) {
     await new Promise(resolve => setTimeout(resolve, pollInterval));
@@ -167,6 +204,16 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
 
     const newSteps = steps.filter(s => typeof s.step_index === 'number' && s.step_index >= startStepIndex);
     if (newSteps.length === 0) continue;
+
+    // Periksa jika ada tool_calls send_message (isi pesan sebenarnya yang ingin disampaikan agen)
+    for (const s of newSteps) {
+      if (s.tool_calls && Array.isArray(s.tool_calls)) {
+        const smCall = s.tool_calls.find(t => t.name === 'send_message');
+        if (smCall?.args?.Message) {
+          capturedSendMessage = smCall.args.Message;
+        }
+      }
+    }
 
     const latest = newSteps[newSteps.length - 1];
 
@@ -180,7 +227,11 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
       (!latest.tool_calls || latest.tool_calls.length === 0)
     ) {
       if (candidateStepIndex === latest.step_index) {
-        return latest.content.trim();
+        let finalContent = latest.content.trim();
+        if (isAgentMetaMessage(finalContent) && capturedSendMessage) {
+          return cleanHumanResponse(capturedSendMessage);
+        }
+        return cleanHumanResponse(finalContent);
       } else {
         candidateStepIndex = latest.step_index;
         candidateContent = latest.content.trim();
@@ -189,8 +240,15 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
     }
   }
 
-  if (candidateContent) return candidateContent;
-  throw new Error('Timeout 3 menit: Agen Antigravity masih sibuk atau belum selesai.');
+  if (candidateContent) {
+    if (isAgentMetaMessage(candidateContent) && capturedSendMessage) {
+      return cleanHumanResponse(capturedSendMessage);
+    }
+    return cleanHumanResponse(candidateContent);
+  }
+  if (capturedSendMessage) return cleanHumanResponse(capturedSendMessage);
+
+  throw new Error('Waktu tunggu habis (timeout).');
 }
 
 // Eksekusi prompt dengan Antigravity CLI
@@ -198,7 +256,7 @@ let isProcessing = false;
 
 async function executeWithAntigravity(userPrompt, sender) {
   if (isProcessing) {
-    await sendWhatsApp(sender, '⏳ *Antigravity sedang menyelesaikan tugas sebelumnya, mohon tunggu sebentar...*');
+    console.log('[Agent] Sedang memproses pesan lain, permintaan diantrekan...');
     return;
   }
 
@@ -209,12 +267,14 @@ async function executeWithAntigravity(userPrompt, sender) {
     let startStepIndex = 0;
 
     if (!activeConversationId) {
-      console.log(`[Agent] Membuka percakapan baru dengan prompt: "${userPrompt}"`);
+      console.log(`[Agent] Membuka sesi baru untuk Andika: "${userPrompt}"`);
+      const fullPrompt = `${SYSTEM_PERSONA}\n\n[Chat WhatsApp dari Andika]: "${userPrompt}"\nJawab langsung kepada Andika seperti manusia yang sedang membalas chat di WhatsApp.`;
+
       const { stdout } = await execFileAsync(AGY_PATH, [
         'agentapi',
         'new-conversation',
         '--model=flash',
-        userPrompt
+        fullPrompt
       ]);
 
       const res = JSON.parse(stdout);
@@ -225,7 +285,9 @@ async function executeWithAntigravity(userPrompt, sender) {
       saveSession(activeConversationId);
       startStepIndex = 1;
     } else {
-      console.log(`[Agent] Mengirim pesan ke sesi ${activeConversationId}: "${userPrompt}"`);
+      console.log(`[Agent] Mengirim chat ke sesi ${activeConversationId}: "${userPrompt}"`);
+      const followUpPrompt = `[Chat WhatsApp dari Andika]: "${userPrompt}"\n(PENTING: Jawab langsung kepada Andika secara santai, ramah, dan manusiawi. JANGAN panggil tool send_message dan JANGAN ada pesan meta seperti 'Pesan dari agen telah dibalas').`;
+
       const currentSteps = readTranscript(activeConversationId);
       startStepIndex = currentSteps.length > 0 ? (currentSteps[currentSteps.length - 1].step_index + 1) : 0;
 
@@ -233,20 +295,20 @@ async function executeWithAntigravity(userPrompt, sender) {
         'agentapi',
         'send-message',
         activeConversationId,
-        userPrompt
+        followUpPrompt
       ]);
     }
 
     const responseText = await waitForAgentResponse(activeConversationId, startStepIndex);
+
     console.log(`[Agent] ✅ Respon diterima (${responseText.length} karakter).`);
 
-    const formatted = formatForWhatsApp(responseText);
-    const replyMessage = `🤖 *Antigravity Agent:*\n\n${formatted}`;
-    await sendWhatsApp(sender, replyMessage);
+    // Langsung kirim respons murni tanpa label "🤖 Antigravity Agent:"
+    await sendWhatsApp(sender, responseText);
 
   } catch (err) {
     console.error('[Agent] ❌ Error:', err.message);
-    await sendWhatsApp(sender, `⚠️ *Terjadi kendala saat memproses instruksi:*\n${err.message}`);
+    await sendWhatsApp(sender, `Waduh, ada kendala saat memproses chat ini: ${err.message}`);
   } finally {
     isProcessing = false;
   }
@@ -289,7 +351,7 @@ const server = http.createServer((req, res) => {
 
         if (!rawMessage || !sender) return;
 
-        // Abaikan jika pesan berasal dari bot sendiri
+        // Abaikan jika pesan berasal dari bot sendiri (termasuk watermark fonnte)
         if (isOurOwnMessage(rawMessage)) {
           return;
         }
@@ -298,34 +360,30 @@ const server = http.createServer((req, res) => {
 
         // Validasi keamanan nomor pengirim
         if (!AUTHORIZED_TARGETS.has(sender)) {
-          console.log(`[Security] ⛔ Pengirim ${sender} tidak ada dalam daftar yang diizinkan.`);
+          console.log(`[Security] ⛔ Pengirim ${sender} tidak diizinkan.`);
           return;
         }
 
         const lowerMsg = rawMessage.toLowerCase();
 
         if (lowerMsg === '/bantuan' || lowerMsg === '/help') {
-          await sendWhatsApp(sender, `📋 *BANTUAN ASISTEN ANTIGRAVITY*
+          await sendWhatsApp(sender, `Halo Pak Andika! Anda bisa chat santai dengan saya untuk minta bantuan apa saja:
+• Tanya jawab umum atau diskusi coding
+• Minta buatkan file atau skrip di komputer Anda
+• Periksa status server atau proyek
 
-Kirim pesan apapun untuk meminta asisten melakukan tugas di PC Anda, misalnya:
-• _"Buatkan script python untuk kalkulator"_
-• _"Periksa status git di proyek saat ini"_
-• _"Cek kesehatan sistem kantor agent"_
-• _"Buatkan file halo.txt di folder repo"_
-
-*Perintah Khusus:*
-• */status* : Cek status server & sesi aktif
-• */baru* atau */reset* : Mulai percakapan sesi baru
-• */bantuan* : Menampilkan menu ini`);
+Perintah cepat:
+• */status* : Cek status asisten
+• */baru* : Mulai percakapan sesi baru
+• */bantuan* : Bantuan ini`);
           return;
         }
 
         if (lowerMsg === '/status') {
           const curId = getSavedSession() || 'Belum ada sesi aktif';
-          await sendWhatsApp(sender, `🟢 *Status Asisten Antigravity*
-• Server: Online (Port ${PORT})
-• Sesi Aktif: \`${curId}\`
-• Status Eksekusi: ${isProcessing ? '⏳ Sedang Bekerja' : '✅ Siaga'}`);
+          await sendWhatsApp(sender, `Asisten aktif dan siaga.
+Sesi: ${curId.slice(0, 8)}...
+Status: ${isProcessing ? 'Sedang memproses tugas' : 'Siap menerima perintah'}`);
           return;
         }
 
@@ -333,14 +391,11 @@ Kirim pesan apapun untuk meminta asisten melakukan tugas di PC Anda, misalnya:
           if (fs.existsSync(SESSION_FILE)) {
             fs.unlinkSync(SESSION_FILE);
           }
-          await sendWhatsApp(sender, `🔄 *Sesi Antigravity telah di-reset.*\nPesan berikutnya akan membuka percakapan sesi baru.`);
+          await sendWhatsApp(sender, `Sip, sesi percakapan telah di-reset. Kita mulai dari awal lagi ya!`);
           return;
         }
 
-        // Beri tanda terima ke pengguna
-        await sendWhatsApp(sender, `⏳ *Menerima perintah:* "${rawMessage.slice(0, 60)}${rawMessage.length > 60 ? '...' : ''}"\n_Antigravity sedang mengeksekusi..._`);
-
-        // Jalankan instruksi ke Antigravity
+        // Jalankan chat ke Antigravity langsung tanpa spam pesan awal
         executeWithAntigravity(rawMessage, sender).catch(err => {
           console.error('[Async Error]', err);
         });
@@ -361,7 +416,7 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`====================================================`);
   console.log(`🚀 Antigravity WhatsApp Assistant Server aktif di port ${PORT}`);
   console.log(`📱 Mengizinkan pengirim: ${Array.from(AUTHORIZED_TARGETS).join(', ')}`);
-  console.log(`🤖 Model: Flash via Antigravity CLI (agy.exe)`);
+  console.log(`🤖 Mode: Natural Human Chat via Antigravity CLI`);
   console.log(`====================================================`);
 
   // Mulai Cloudflare Tunnel
@@ -379,24 +434,8 @@ server.listen(PORT, '0.0.0.0', async () => {
         const tunnelUrl = match[0];
         console.log(`\n🎉 TUNNEL URL BERHASIL DIBUAT: ${tunnelUrl}\n`);
 
-        // Update Webhook Fonnte secara otomatis!
-        const success = await updateFonnteWebhook(tunnelUrl);
-        if (success) {
-          // Kirim notifikasi sambutan ke WhatsApp Andika
-          const welcomeMsg = `🚀 *Antigravity WhatsApp Assistant Siap!*
-
-Halo Pak Andika! Asisten pribadi Antigravity Anda telah aktif dan terhubung ke komputer Anda.
-
-Silakan kirimkan perintah atau pertanyaan langsung di chat ini untuk dieksekusi oleh Antigravity.
-
-*Contoh Perintah:*
-1. _"Periksa git status repo ini"_
-2. _"Buatkan file teks bernama info.txt dengan isi Halo Dunia"_
-3. _"Jelaskan fungsi proyek kantor-agent"_
-
-Ketik */bantuan* untuk bantuan lebih lanjut.`;
-          await sendWhatsApp(DEVICE_NUMBER, welcomeMsg);
-        }
+        // Update Webhook Fonnte secara otomatis
+        await updateFonnteWebhook(tunnelUrl);
       }
     });
 
@@ -414,6 +453,6 @@ Ketik */bantuan* untuk bantuan lebih lanjut.`;
     process.on('exit', cleanup);
 
   } else {
-    console.warn(`[Tunnel] ⚠️ cloudflared.exe tidak ditemukan di ${CLOUDFLARED_PATH}. Jalankan tunnel secara manual.`);
+    console.warn(`[Tunnel] ⚠️ cloudflared.exe tidak ditemukan di ${CLOUDFLARED_PATH}.`);
   }
 });
