@@ -17,16 +17,18 @@ const CLOUDFLARED_PATH = path.join(process.cwd(), 'cloudflared.exe');
 const SESSION_FILE = path.join(process.cwd(), '.wa-assistant-session.json');
 
 // Persona sistem untuk gaya bahasa manusiawi & natural di WhatsApp
-const SYSTEM_PERSONA = `Peran Anda: Anda adalah asisten pribadi WhatsApp untuk Andika.
-Prinsip gaya bicara:
-1. Berbicaralah santai, ramah, sopan, dan natural seperti rekan kerja atau asisten pribadi manusia di WhatsApp.
-2. Langsung berikan inti jawaban atau konfirmasi tindakan yang diminta, tanpa basa-basi robot/agen.
+const SYSTEM_PERSONA = `Peran Anda: Anda adalah asisten pribadi dan asisten grup WhatsApp yang cerdas, ramah, dan solutif.
+Owner sistem Anda: Andika (nomor 6282163850914).
+
+Prinsip komunikasi:
+1. Berbicaralah santai, ramah, sopan, dan natural seperti rekan kerja atau teman diskusi di WhatsApp.
+2. Jawab langsung ke inti pertanyaan atau permintaan, tanpa basa-basi robot/agen.
 3. JANGAN PERNAH menggunakan tool send_message. Langsung berikan jawaban dalam teks respon akhir Anda.
 4. JANGAN PERNAH menyertakan pesan meta atau format robot seperti "Pesan dari agen ... telah dibalas", "Recipient", atau ID teknis sistem.
-5. Jika ditanya soal sisa token atau kuota, jelaskan dengan santai bahwa kapasitas konteks obrolan sangat longgar (hingga 1-2 juta token) dan saat ini baru terpakai sangat sedikit. Kuota pesan WhatsApp di Fonnte juga masih aman (~990+ pesan gratis).
-6. Jika diminta membuat file, menjalankan skrip, atau memeriksa sesuatu di komputer, gunakan tool yang tersedia (write_file, run_command, dll.), lalu konfirmasi hasilnya secara santai dan jelas kepada Andika.`;
+5. Jika ditanya soal sisa token atau kuota, jelaskan dengan santai bahwa kapasitas konteks obrolan sangat longgar (hingga 1-2 juta token) dan saat ini baru terpakai sangat sedikit. Kuota WhatsApp di Fonnte juga masih aman (~990+ pesan gratis).
+6. Di dalam Grup: Anda boleh berdiskusi, membantu coding, atau menjawab pertanyaan dari semua anggota grup secara ramah. Namun, eksekusi perintah sistem di komputer (membuat file, menjalankan terminal) hanya diizinkan jika diminta oleh Owner (Andika).`;
 
-// Nomor WhatsApp yang diizinkan mengontrol Antigravity
+// Nomor WhatsApp Owner yang diizinkan mengontrol Antigravity
 const AUTHORIZED_TARGETS = new Set([
   '6282163850914',
   '082163850914',
@@ -45,7 +47,7 @@ function markSent(msg) {
 
 function isOurOwnMessage(msg) {
   if (!msg) return false;
-  // Deteksi otomatis jika pesan mengandung watermark Fonnte
+  // Deteksi watermark Fonnte
   if (/fonnte\.com/i.test(msg) || /sent via/i.test(msg)) {
     return true;
   }
@@ -105,7 +107,7 @@ function saveSession(conversationId) {
   }
 }
 
-// Kirim pesan ke WhatsApp via Fonnte
+// Kirim pesan ke WhatsApp via Fonnte (Mendukung nomor pribadi & ID grup)
 async function sendWhatsApp(target, message) {
   if (!FONNTE_TOKEN) {
     console.log('[WA] Token tidak tersedia. Pesan tidak dikirim:', message);
@@ -126,10 +128,10 @@ async function sendWhatsApp(target, message) {
 
     const data = await res.json();
     if (data.status) {
-      console.log(`[WA] ✅ Pesan terkirim ke ${target}`);
+      console.log(`[WA] ✅ Pesan terkirim ke target: ${target}`);
       return true;
     } else {
-      console.error(`[WA] ⚠️ Gagal kirim ke ${target}:`, data.reason || JSON.stringify(data));
+      console.error(`[WA] ⚠️ Gagal kirim ke target ${target}:`, data.reason || JSON.stringify(data));
       return false;
     }
   } catch (err) {
@@ -138,7 +140,7 @@ async function sendWhatsApp(target, message) {
   }
 }
 
-// Update webhook Fonnte secara otomatis via API
+// Update webhook Fonnte secara otomatis via API (Aktifkan Personal + Quick + Group)
 async function updateFonnteWebhook(webhookUrl) {
   try {
     console.log(`[Fonnte API] Mendaftarkan webhook URL: ${webhookUrl}...`);
@@ -148,7 +150,8 @@ async function updateFonnteWebhook(webhookUrl) {
       webhook: webhookUrl,
       autoread: 'true',
       personal: 'true',
-      quick: 'true'
+      quick: 'true',
+      group: 'true' // Mengizinkan penerimaan pesan dari grup WhatsApp
     });
 
     const res = await fetch('https://api.fonnte.com/update-device', {
@@ -159,7 +162,7 @@ async function updateFonnteWebhook(webhookUrl) {
 
     const data = await res.json();
     if (data.status) {
-      console.log(`[Fonnte API] ✅ Webhook berhasil diperbarui di Fonnte: ${webhookUrl}`);
+      console.log(`[Fonnte API] ✅ Webhook & Fitur Grup berhasil diperbarui di Fonnte: ${webhookUrl}`);
       return true;
     } else {
       console.warn(`[Fonnte API] ⚠️ Gagal update webhook:`, data.reason || JSON.stringify(data));
@@ -205,7 +208,7 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
     const newSteps = steps.filter(s => typeof s.step_index === 'number' && s.step_index >= startStepIndex);
     if (newSteps.length === 0) continue;
 
-    // Periksa jika ada tool_calls send_message (isi pesan sebenarnya yang ingin disampaikan agen)
+    // Periksa jika ada tool_calls send_message
     for (const s of newSteps) {
       if (s.tool_calls && Array.isArray(s.tool_calls)) {
         const smCall = s.tool_calls.find(t => t.name === 'send_message');
@@ -254,9 +257,9 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
 // Eksekusi prompt dengan Antigravity CLI
 let isProcessing = false;
 
-async function executeWithAntigravity(userPrompt, sender) {
+async function executeWithAntigravity(userPrompt, targetRecipient, senderName, isGroup, isOwner) {
   if (isProcessing) {
-    console.log('[Agent] Sedang memproses pesan lain, permintaan diantrekan...');
+    console.log('[Agent] Sedang memproses tugas lain, permintaan diantrekan...');
     return;
   }
 
@@ -266,9 +269,21 @@ async function executeWithAntigravity(userPrompt, sender) {
   try {
     let startStepIndex = 0;
 
+    // Buat konteks instruksi spesifik
+    let promptContext = '';
+    if (isGroup) {
+      if (isOwner) {
+        promptContext = `[Pesan di Grup WhatsApp dari Owner (${senderName})]: "${userPrompt}"\n(PENTING: Jawab langsung ke ${senderName} di grup dengan ramah dan santai. Anda boleh mengeksekusi kode atau perintah file jika diminta).`;
+      } else {
+        promptContext = `[Pesan di Grup WhatsApp dari Anggota Grup (${senderName})]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
+      }
+    } else {
+      promptContext = `[Chat Pribadi WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi. JANGAN gunakan tool send_message dan JANGAN ada pesan meta internal agen).`;
+    }
+
     if (!activeConversationId) {
-      console.log(`[Agent] Membuka sesi baru untuk Andika: "${userPrompt}"`);
-      const fullPrompt = `${SYSTEM_PERSONA}\n\n[Chat WhatsApp dari Andika]: "${userPrompt}"\nJawab langsung kepada Andika seperti manusia yang sedang membalas chat di WhatsApp.`;
+      console.log(`[Agent] Membuka sesi baru untuk ${senderName}: "${userPrompt}"`);
+      const fullPrompt = `${SYSTEM_PERSONA}\n\n${promptContext}`;
 
       const { stdout } = await execFileAsync(AGY_PATH, [
         'agentapi',
@@ -286,8 +301,6 @@ async function executeWithAntigravity(userPrompt, sender) {
       startStepIndex = 1;
     } else {
       console.log(`[Agent] Mengirim chat ke sesi ${activeConversationId}: "${userPrompt}"`);
-      const followUpPrompt = `[Chat WhatsApp dari Andika]: "${userPrompt}"\n(PENTING: Jawab langsung kepada Andika secara santai, ramah, dan manusiawi. JANGAN panggil tool send_message dan JANGAN ada pesan meta seperti 'Pesan dari agen telah dibalas').`;
-
       const currentSteps = readTranscript(activeConversationId);
       startStepIndex = currentSteps.length > 0 ? (currentSteps[currentSteps.length - 1].step_index + 1) : 0;
 
@@ -295,20 +308,19 @@ async function executeWithAntigravity(userPrompt, sender) {
         'agentapi',
         'send-message',
         activeConversationId,
-        followUpPrompt
+        promptContext
       ]);
     }
 
     const responseText = await waitForAgentResponse(activeConversationId, startStepIndex);
-
     console.log(`[Agent] ✅ Respon diterima (${responseText.length} karakter).`);
 
-    // Langsung kirim respons murni tanpa label "🤖 Antigravity Agent:"
-    await sendWhatsApp(sender, responseText);
+    // Kirim balasan ke target (bisa nomor pribadi atau ID grup)
+    await sendWhatsApp(targetRecipient, responseText);
 
   } catch (err) {
     console.error('[Agent] ❌ Error:', err.message);
-    await sendWhatsApp(sender, `Waduh, ada kendala saat memproses chat ini: ${err.message}`);
+    await sendWhatsApp(targetRecipient, `Waduh, ada kendala saat memproses chat ini: ${err.message}`);
   } finally {
     isProcessing = false;
   }
@@ -320,7 +332,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'active',
-      service: 'Antigravity WhatsApp Assistant',
+      service: 'Antigravity WhatsApp Assistant (Personal & Group)',
       conversationId: getSavedSession(),
       port: PORT,
       timestamp: new Date().toISOString()
@@ -345,29 +357,74 @@ const server = http.createServer((req, res) => {
           payload = Object.fromEntries(params.entries());
         }
 
-        const sender = (payload.sender || payload.phone || '').replace(/[^0-9]/g, '');
-        const senderName = payload.name || 'Pengguna';
+        const rawSender = String(payload.sender || payload.phone || '').trim();
+        const rawMember = String(payload.member || '').trim();
         const rawMessage = (payload.message || payload.text || '').trim();
+        const senderName = payload.name || 'Teman';
 
-        if (!rawMessage || !sender) return;
+        if (!rawMessage || !rawSender) return;
 
-        // Abaikan jika pesan berasal dari bot sendiri (termasuk watermark fonnte)
+        // Abaikan jika pesan berasal dari bot sendiri / fonnte footer
         if (isOurOwnMessage(rawMessage)) {
           return;
         }
 
-        console.log(`[Webhook] Pesan masuk dari ${senderName} (${sender}): "${rawMessage}"`);
+        // Cek apakah pesan berasal dari grup WhatsApp
+        const isGroup = rawSender.endsWith('@g.us') || rawSender.includes('@g.us');
+        const targetRecipient = rawSender; // Target kirim balik (ID grup jika di grup, atau nomor jika personal)
 
-        // Validasi keamanan nomor pengirim
-        if (!AUTHORIZED_TARGETS.has(sender)) {
-          console.log(`[Security] ⛔ Pengirim ${sender} tidak diizinkan.`);
-          return;
+        // Nomor pengguna yang sebenarnya mengirim pesan
+        const senderNumber = (isGroup && rawMember ? rawMember : rawSender).replace(/[^0-9]/g, '');
+        const isOwner = AUTHORIZED_TARGETS.has(senderNumber);
+
+        let userPrompt = rawMessage;
+
+        if (isGroup) {
+          // Di grup, hanya respon jika ada trigger: !bot, !ai, @bot
+          const triggerMatch = rawMessage.match(/^(!bot|!ai|@bot)\s*(.*)/i);
+          if (!triggerMatch) {
+            // Bukan untuk bot, abaikan percakapan antar anggota grup
+            return;
+          }
+
+          userPrompt = triggerMatch[2]?.trim() || '';
+          if (!userPrompt) {
+            await sendWhatsApp(targetRecipient, `Halo ${senderName}! Mau tanya atau minta bantuan apa? Coba ketik: \`!bot <pertanyaan Anda>\``);
+            return;
+          }
+
+          console.log(`[Group Webhook] Dari ${senderName} (${senderNumber}) di ${rawSender}: "${userPrompt}"`);
+
+        } else {
+          // Di chat pribadi:
+          // Validasi keamanan: hanya Owner yang boleh chat pribadi
+          if (!isOwner) {
+            console.log(`[Security] ⛔ Chat pribadi dari ${senderNumber} ditolak (bukan Owner).`);
+            return;
+          }
+
+          // Bersihkan awalan !bot jika user iseng mengetiknya di chat pribadi
+          userPrompt = rawMessage.replace(/^(!bot|!ai|@bot)\s*/i, '').trim() || rawMessage;
+          console.log(`[Private Webhook] Dari ${senderName} (${senderNumber}): "${userPrompt}"`);
         }
 
-        const lowerMsg = rawMessage.toLowerCase();
+        const lowerPrompt = userPrompt.toLowerCase();
 
-        if (lowerMsg === '/bantuan' || lowerMsg === '/help') {
-          await sendWhatsApp(sender, `Halo Pak Andika! Anda bisa chat santai dengan saya untuk minta bantuan apa saja:
+        // Perintah Bantuan
+        if (lowerPrompt === '/bantuan' || lowerPrompt === 'bantuan' || lowerPrompt === '/help' || lowerPrompt === 'help') {
+          if (isGroup) {
+            await sendWhatsApp(targetRecipient, `Halo ${senderName}! Saya adalah asisten AI di grup ini.
+
+Cara menggunakan:
+• Ketik: \`!bot <pertanyaan/perintah>\` atau \`!ai <pertanyaan>\`
+• Contoh: \`!bot buatkan fungsi javascript untuk hitung diskon\`
+• Contoh: \`!bot jelaskan perbedaan REST API dan GraphQL\`
+
+Perintah khusus:
+• \`!bot status\` : Cek status asisten
+• \`!bot bantuan\` : Tampilkan panduan ini`);
+          } else {
+            await sendWhatsApp(targetRecipient, `Halo Pak Andika! Anda bisa chat santai dengan saya untuk minta bantuan apa saja:
 • Tanya jawab umum atau diskusi coding
 • Minta buatkan file atau skrip di komputer Anda
 • Periksa status server atau proyek
@@ -376,27 +433,34 @@ Perintah cepat:
 • */status* : Cek status asisten
 • */baru* : Mulai percakapan sesi baru
 • */bantuan* : Bantuan ini`);
+          }
           return;
         }
 
-        if (lowerMsg === '/status') {
+        // Perintah Status
+        if (lowerPrompt === '/status' || lowerPrompt === 'status') {
           const curId = getSavedSession() || 'Belum ada sesi aktif';
-          await sendWhatsApp(sender, `Asisten aktif dan siaga.
-Sesi: ${curId.slice(0, 8)}...
-Status: ${isProcessing ? 'Sedang memproses tugas' : 'Siap menerima perintah'}`);
+          await sendWhatsApp(targetRecipient, `Asisten aktif dan siaga.
+Status: ${isProcessing ? 'Sedang memproses tugas' : 'Siap menerima perintah'}
+Mode: ${isGroup ? 'Grup WhatsApp' : 'Chat Pribadi'}`);
           return;
         }
 
-        if (lowerMsg === '/baru' || lowerMsg === '/reset') {
+        // Perintah Reset (Hanya Owner)
+        if (lowerPrompt === '/baru' || lowerPrompt === 'baru' || lowerPrompt === '/reset' || lowerPrompt === 'reset') {
+          if (!isOwner) {
+            await sendWhatsApp(targetRecipient, `Maaf ${senderName}, hanya Owner yang dapat mereset sesi percakapan.`);
+            return;
+          }
           if (fs.existsSync(SESSION_FILE)) {
             fs.unlinkSync(SESSION_FILE);
           }
-          await sendWhatsApp(sender, `Sip, sesi percakapan telah di-reset. Kita mulai dari awal lagi ya!`);
+          await sendWhatsApp(targetRecipient, `Sip, sesi percakapan telah di-reset. Kita mulai dari awal lagi ya!`);
           return;
         }
 
-        // Jalankan chat ke Antigravity langsung tanpa spam pesan awal
-        executeWithAntigravity(rawMessage, sender).catch(err => {
+        // Jalankan eksekusi dengan Antigravity
+        executeWithAntigravity(userPrompt, targetRecipient, senderName, isGroup, isOwner).catch(err => {
           console.error('[Async Error]', err);
         });
 
@@ -415,8 +479,9 @@ Status: ${isProcessing ? 'Sedang memproses tugas' : 'Siap menerima perintah'}`);
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`====================================================`);
   console.log(`🚀 Antigravity WhatsApp Assistant Server aktif di port ${PORT}`);
-  console.log(`📱 Mengizinkan pengirim: ${Array.from(AUTHORIZED_TARGETS).join(', ')}`);
-  console.log(`🤖 Mode: Natural Human Chat via Antigravity CLI`);
+  console.log(`📱 Owner Whitelist: ${Array.from(AUTHORIZED_TARGETS).join(', ')}`);
+  console.log(`👥 Mode Grup: AKTIF (Trigger: !bot, !ai, @bot)`);
+  console.log(`🤖 Model: Gemini Flash via Antigravity CLI`);
   console.log(`====================================================`);
 
   // Mulai Cloudflare Tunnel
@@ -434,7 +499,7 @@ server.listen(PORT, '0.0.0.0', async () => {
         const tunnelUrl = match[0];
         console.log(`\n🎉 TUNNEL URL BERHASIL DIBUAT: ${tunnelUrl}\n`);
 
-        // Update Webhook Fonnte secara otomatis
+        // Update Webhook Fonnte secara otomatis (personal + quick + group)
         await updateFonnteWebhook(tunnelUrl);
       }
     });
