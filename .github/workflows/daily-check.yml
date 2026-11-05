@@ -4,7 +4,7 @@ on:
   schedule:
     # Berjalan setiap hari pukul 08:00 WIB (01:00 UTC)
     - cron: '0 1 * * *'
-  workflow_dispatch: # Memungkinkan tombol "Run workflow" dijalankan manual kapan saja
+  workflow_dispatch: # Memungkinkan tombol "Run workflow" manual di GitHub
 
 permissions:
   contents: write
@@ -28,6 +28,13 @@ jobs:
       - name: Tampilkan Ringkasan di GitHub Actions
         run: |
           cat LAPORAN_LOG_HARIAN.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Kirim Notifikasi ke WhatsApp
+        env:
+          WA_PHONE: ${{ secrets.WA_PHONE }}
+          WA_APIKEY: ${{ secrets.WA_APIKEY }}
+        run: |
+          node send-wa.mjs
 
       - name: Simpan dan Commit Laporan Otomatis
         run: |
