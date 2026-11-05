@@ -98,7 +98,7 @@ async function handle(req, res) {
     } catch {
       return send(res, 404, {}, '');
     }
-    if (!f.startsWith(base + path.sep) || !st.isFile() || path.extname(f).toLowerCase() !== '.js') return send(res, 404, {}, '');
+    if (!f.toLowerCase().startsWith((base + path.sep).toLowerCase()) || !st.isFile() || path.extname(f).toLowerCase() !== '.js') return send(res, 404, {}, '');
     const etag = `"${Math.floor(st.mtimeMs / 1000).toString(16)}-${st.size.toString(16)}"`;
     const h = { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=3600', ETag: etag };
     if (req.headers['if-none-match'] === etag) return send(res, 304, h, '');

@@ -31,12 +31,19 @@ export function transcriptRoot(projectDir) {
         home = '';
       }
     }
-    base = `${home.replace(/\/+$/, '')}/.claude`;
+    base = `${home.replace(/[/\\]+$/, '')}/.claude`;
   }
-  return `${base.replace(/\/+$/, '')}/projects/${projectDir.replace(/[^a-zA-Z0-9]/g, '-')}`;
+  return path.join(base, 'projects', projectDir.replace(/[^a-zA-Z0-9]/g, '-'));
 }
 
 const memo = new Map(); // file → {size, mtimeMs, s}: menghindari parse ulang cache di proses Node yang sama
+function setMemo(file, val) {
+  if (memo.size > 200) {
+    const firstKey = memo.keys().next().value;
+    memo.delete(firstKey);
+  }
+  memo.set(file, val);
+}
 
 export class Transcripts {
   constructor(projectDir, storageDir, cfg) {
@@ -156,7 +163,7 @@ export class Transcripts {
         }
       }
     }
-    memo.set(file, { size, mtimeMs: st.mtimeMs, s, head: s.head });
+    setMemo(file, { size, mtimeMs: st.mtimeMs, s, head: s.head });
     return {
       started: s.started, updated: s.updated, tools: s.tools, tokens: s.tokens.in + s.tokens.out + s.tokens.cache,
       events: s.events, lastKind: s.lastKind, limit: s.limit, files: s.files, todos: s.todos, todosAt: s.todosAt,
@@ -296,28 +303,40 @@ export class Transcripts {
   describeTool(name, inp) {
     const str = (v) => (typeof v === 'string' ? v : typeof v === 'number' && Number.isInteger(v) ? String(v) : '');
     let p = null;
-    for (const k of ['file_path', 'notebook_path']) {
+    for (const k of ['file_path', 'notebook_path', 'path', 'filePath']) {
       if (typeof inp[k] === 'string' && inp[k] !== '') {
         const v = inp[k];
-        p = v.startsWith(`${this.projectDir}/`) ? v.slice(this.projectDir.length + 1) : basename(v);
+        const normV = v.replace(/\\/g, '/');
+        const normProj = this.projectDir.replace(/\\/g, '/');
+        if (normV.toLowerCase().startsWith(`${normProj.toLowerCase()}/`)) {
+          p = normV.slice(normProj.length + 1);
+        } else {
+          p = basename(v);
+        }
         break;
       }
     }
     let text;
     switch (name) {
-      case 'Read': text = `Membaca ${p ?? ''}`; break;
-      case 'Write': text = `Menulis ${p ?? ''}`; break;
-      case 'Edit': case 'MultiEdit': case 'NotebookEdit': text = `Mengubah ${p ?? ''}`; break;
-      case 'Bash': text = `Menjalankan: ${str(inp.description) !== '' ? str(inp.description) : `${firstToken(str(inp.command))} …`}`; break;
-      case 'Grep': text = `Mencari '${clip(str(inp.pattern), 50)}'`; break;
-      case 'Glob': text = `Mencari file ${clip(str(inp.pattern), 60)}`; break;
+      case 'Read': text = p ? `Membaca ${p}` : 'Membaca berkas'; break;
+      case 'Write': text = p ? `Menulis ${p}` : 'Menulis berkas'; break;
+      case 'Edit': case 'MultiEdit': case 'NotebookEdit': text = p ? `Mengubah ${p}` : 'Mengubah berkas'; break;
+      case 'Bash': {
+        const desc = str(inp.description);
+        const cmd = str(inp.command);
+        const token = firstToken(cmd);
+        text = desc !== '' ? `Menjalankan: ${desc}` : token !== '' ? `Menjalankan: ${token} …` : 'Menjalankan terminal';
+        break;
+      }
+      case 'Grep': text = str(inp.pattern) !== '' ? `Mencari '${clip(str(inp.pattern), 50)}'` : 'Mencari kode'; break;
+      case 'Glob': text = str(inp.pattern) !== '' ? `Mencari file ${clip(str(inp.pattern), 60)}` : 'Mencari file'; break;
       case 'Agent': case 'Task': text = `Mendelegasikan: ${str(inp.description) !== '' ? str(inp.description) : 'subagent'}`; break;
       case 'SendMessage': text = 'Mengirim pesan ke agent'; break;
       case 'AskUserQuestion': text = 'Bertanya ke user'; break;
       case 'WebFetch': case 'WebSearch': text = 'Riset web'; break;
-      case 'Skill': text = `Memuat skill ${str(inp.skill)}`; break;
+      case 'Skill': text = str(inp.skill) !== '' ? `Memuat skill ${str(inp.skill)}` : 'Memuat skill'; break;
       case 'TodoWrite': text = 'Memperbarui daftar tugas'; break;
-      case 'TaskCreate': text = `Membuat tugas: ${str(inp.subject)}`; break;
+      case 'TaskCreate': text = str(inp.subject) !== '' ? `Membuat tugas: ${str(inp.subject)}` : 'Membuat tugas'; break;
       case 'TaskUpdate': text = `Memperbarui tugas${str(inp.status) !== '' ? ` → ${str(inp.status)}` : ''}`; break;
       case 'TaskStop': text = 'Menghentikan subagent'; break;
       case 'SubagentHandback': text = 'Menyerahkan laporan'; break;
@@ -351,7 +370,9 @@ function fresh() {
   };
 }
 function todoStatus(v) {
-  return ['pending', 'in_progress', 'completed'].includes(v) ? v : 'pending';
+  if (v === 'completed' || v === 'done') return 'completed';
+  if (v === 'in_progress' || v === 'in-progress') return 'in_progress';
+  return 'pending';
 }
 function int(v) {
   return typeof v === 'number' && Number.isFinite(v) ? Math.trunc(v) : 0;

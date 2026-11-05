@@ -344,7 +344,13 @@ final class KTranscripts
 
     private static function todoStatus(mixed $v): string
     {
-        return in_array($v, ['pending', 'in_progress', 'completed'], true) ? $v : 'pending';
+        if ($v === 'completed' || $v === 'done') {
+            return 'completed';
+        }
+        if ($v === 'in_progress' || $v === 'in-progress') {
+            return 'in_progress';
+        }
+        return 'pending';
     }
 
     private static function int(mixed $v): int
@@ -369,18 +375,24 @@ final class KTranscripts
     {
         $str = static fn($v): string => is_string($v) ? $v : (is_int($v) ? (string) $v : '');
         $path = null;
-        foreach (['file_path', 'notebook_path'] as $k) {
+        foreach (['file_path', 'notebook_path', 'path', 'filePath'] as $k) {
             if (is_string($in[$k] ?? null) && $in[$k] !== '') {
                 $p = $in[$k];
-                $path = str_starts_with($p, $this->projectDir . '/') ? substr($p, strlen($this->projectDir) + 1) : basename($p);
+                $normP = str_replace('\\', '/', $p);
+                $normProj = str_replace('\\', '/', $this->projectDir);
+                if (str_starts_with(strtolower($normP), strtolower($normProj) . '/')) {
+                    $path = substr($normP, strlen($normProj) + 1);
+                } else {
+                    $path = basename($p);
+                }
                 break;
             }
         }
         $text = match ($name) {
-            'Read' => 'Membaca ' . $path,
-            'Write' => 'Menulis ' . $path,
-            'Edit', 'MultiEdit', 'NotebookEdit' => 'Mengubah ' . $path,
-            'Bash' => 'Menjalankan: ' . ($str($in['description'] ?? null) !== '' ? $str($in['description']) : self::firstToken($str($in['command'] ?? null)) . ' …'),
+            'Read' => $path ? 'Membaca ' . $path : 'Membaca berkas',
+            'Write' => $path ? 'Menulis ' . $path : 'Menulis berkas',
+            'Edit', 'MultiEdit', 'NotebookEdit' => $path ? 'Mengubah ' . $path : 'Mengubah berkas',
+            'Bash' => 'Menjalankan: ' . ($str($in['description'] ?? null) !== '' ? $str($in['description']) : (self::firstToken($str($in['command'] ?? null)) !== '' ? self::firstToken($str($in['command'] ?? null)) . ' …' : 'perintah terminal')),
             'Grep' => "Mencari '" . KUtil::clip($str($in['pattern'] ?? null), 50) . "'",
             'Glob' => 'Mencari file ' . KUtil::clip($str($in['pattern'] ?? null), 60),
             'Agent', 'Task' => 'Mendelegasikan: ' . ($str($in['description'] ?? null) !== '' ? $str($in['description']) : 'subagent'),

@@ -1,0 +1,37 @@
+name: Daily System & Log Health Check
+
+on:
+  schedule:
+    # Berjalan setiap hari pukul 08:00 WIB (01:00 UTC)
+    - cron: '0 1 * * *'
+  workflow_dispatch: # Memungkinkan tombol "Run workflow" dijalankan manual kapan saja
+
+permissions:
+  contents: write
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Jalankan Pemeriksaan Log Harian
+        run: |
+          node check-logs.mjs
+
+      - name: Tampilkan Ringkasan di GitHub Actions
+        run: |
+          cat LAPORAN_LOG_HARIAN.md >> $GITHUB_STEP_SUMMARY
+
+      - name: Simpan dan Commit Laporan Otomatis
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add LAPORAN_LOG_HARIAN.md
+          git diff --quiet && git diff --staged --quiet || (git commit -m "chore(cron): perbarui LAPORAN_LOG_HARIAN.md [skip ci]" && git push)
