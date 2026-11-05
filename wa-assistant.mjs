@@ -4,6 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import {
+  addJob,
+  removeJob,
+  loadJobs,
+  parseScheduleCommand,
+  startCronScheduler,
+  getWIBDate
+} from './cron-manager.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -47,7 +55,6 @@ function markSent(msg) {
 
 function isOurOwnMessage(msg) {
   if (!msg) return false;
-  // Deteksi watermark Fonnte
   if (/fonnte\.com/i.test(msg) || /sent via/i.test(msg)) {
     return true;
   }
@@ -153,7 +160,6 @@ async function sendWhatsApp(target, message, isRetry = false) {
     } else {
       console.error(`[WA] ⚠️ Gagal kirim ke target ${target}:`, data.reason || JSON.stringify(data));
 
-      // Jika error invalid group id, lakukan sync group list dan coba kirim ulang 1x
       if (!isRetry && data.reason?.toLowerCase().includes('invalid group id')) {
         console.log(`[WA] 🔄 Terdeteksi 'invalid group id'. Menyinkronkan daftar grup Fonnte lalu mencoba kirim ulang...`);
         await syncFonnteGroups();
@@ -169,7 +175,7 @@ async function sendWhatsApp(target, message, isRetry = false) {
   }
 }
 
-// Update webhook Fonnte secara otomatis via API (Aktifkan Personal + Quick + Group)
+// Update webhook Fonnte secara otomatis via API
 async function updateFonnteWebhook(webhookUrl) {
   try {
     console.log(`[Fonnte API] Mendaftarkan webhook URL: ${webhookUrl}...`);
@@ -180,7 +186,7 @@ async function updateFonnteWebhook(webhookUrl) {
       autoread: 'true',
       personal: 'true',
       quick: 'true',
-      group: 'true' // Mengizinkan penerimaan pesan dari grup WhatsApp
+      group: 'true'
     });
 
     const res = await fetch('https://api.fonnte.com/update-device', {
@@ -237,7 +243,6 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
     const newSteps = steps.filter(s => typeof s.step_index === 'number' && s.step_index >= startStepIndex);
     if (newSteps.length === 0) continue;
 
-    // Periksa jika ada tool_calls send_message
     for (const s of newSteps) {
       if (s.tool_calls && Array.isArray(s.tool_calls)) {
         const smCall = s.tool_calls.find(t => t.name === 'send_message');
@@ -283,7 +288,27 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
   throw new Error('Waktu tunggu habis (timeout).');
 }
 
-// Eksekusi prompt dengan Antigravity CLI
+// Eksekusi prompt standalone untuk Cron Job Antigravity
+async function executeCronWithAntigravity(taskPrompt) {
+  console.log(`[Cron Agent] Membuka sesi eksekusi baru untuk tugas terjadwal...`);
+  const fullPrompt = `${SYSTEM_PERSONA}\n\n${taskPrompt}`;
+
+  const { stdout } = await execFileAsync(AGY_PATH, [
+    'agentapi',
+    'new-conversation',
+    '--model=flash',
+    fullPrompt
+  ]);
+
+  const res = JSON.parse(stdout);
+  const convId = res?.response?.newConversation?.conversationId;
+  if (!convId) throw new Error('Gagal inisialisasi percakapan Antigravity');
+
+  const responseText = await waitForAgentResponse(convId, 1);
+  return responseText;
+}
+
+// Eksekusi prompt percakapan dengan Antigravity CLI
 let isProcessing = false;
 
 async function executeWithAntigravity(userPrompt, targetRecipient, senderName, isGroup, isOwner) {
@@ -298,7 +323,6 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
   try {
     let startStepIndex = 0;
 
-    // Buat konteks instruksi spesifik
     let promptContext = '';
     if (isGroup) {
       if (isOwner) {
@@ -344,7 +368,6 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
     const responseText = await waitForAgentResponse(activeConversationId, startStepIndex);
     console.log(`[Agent] ✅ Respon diterima (${responseText.length} karakter).`);
 
-    // Kirim balasan ke target (bisa nomor pribadi atau ID grup)
     await sendWhatsApp(targetRecipient, responseText);
 
   } catch (err) {
@@ -361,7 +384,7 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'active',
-      service: 'Antigravity WhatsApp Assistant (Personal & Group)',
+      service: 'Antigravity WhatsApp Assistant + Cron Engine',
       conversationId: getSavedSession(),
       port: PORT,
       timestamp: new Date().toISOString()
@@ -373,7 +396,6 @@ const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', chunk => { body += chunk; });
     req.on('end', async () => {
-      // Balas HTTP 200 segera ke Fonnte
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: true }));
 
@@ -393,26 +415,21 @@ const server = http.createServer((req, res) => {
 
         if (!rawMessage || !rawSender) return;
 
-        // Abaikan jika pesan berasal dari bot sendiri / fonnte footer
         if (isOurOwnMessage(rawMessage)) {
           return;
         }
 
-        // Cek apakah pesan berasal dari grup WhatsApp
         const isGroup = rawSender.endsWith('@g.us') || rawSender.includes('@g.us');
-        const targetRecipient = rawSender; // Target kirim balik (ID grup jika di grup, atau nomor jika personal)
+        const targetRecipient = rawSender;
 
-        // Nomor pengguna yang sebenarnya mengirim pesan
         const senderNumber = (isGroup && rawMember ? rawMember : rawSender).replace(/[^0-9]/g, '');
         const isOwner = AUTHORIZED_TARGETS.has(senderNumber);
 
         let userPrompt = rawMessage;
 
         if (isGroup) {
-          // Di grup, hanya respon jika ada trigger: !bot, !ai, @bot
           const triggerMatch = rawMessage.match(/^(!bot|!ai|@bot)\s*(.*)/i);
           if (!triggerMatch) {
-            // Bukan untuk bot, abaikan percakapan antar anggota grup
             return;
           }
 
@@ -425,57 +442,136 @@ const server = http.createServer((req, res) => {
           console.log(`[Group Webhook] Dari ${senderName} (${senderNumber}) di ${rawSender}: "${userPrompt}"`);
 
         } else {
-          // Di chat pribadi:
-          // Validasi keamanan: hanya Owner yang boleh chat pribadi
           if (!isOwner) {
             console.log(`[Security] ⛔ Chat pribadi dari ${senderNumber} ditolak (bukan Owner).`);
             return;
           }
 
-          // Bersihkan awalan !bot jika user iseng mengetiknya di chat pribadi
           userPrompt = rawMessage.replace(/^(!bot|!ai|@bot)\s*/i, '').trim() || rawMessage;
           console.log(`[Private Webhook] Dari ${senderName} (${senderNumber}): "${userPrompt}"`);
         }
 
         const lowerPrompt = userPrompt.toLowerCase();
 
-        // Perintah Bantuan
+        // 1. Perintah Melihat Daftar Jadwal Aktif
+        if (lowerPrompt === '/jadwal' || lowerPrompt === 'jadwal' || lowerPrompt === 'list jadwal' || lowerPrompt === '/list-jadwal') {
+          const jobs = loadJobs();
+          if (jobs.length === 0) {
+            await sendWhatsApp(targetRecipient, `Belum ada jadwal atau pengingat aktif saat ini.
+
+*Contoh Cara Membuat Jadwal:*
+• \`!bot ingatkan saya 15 menit lagi untuk minum obat\`
+• \`!bot ingatkan saya jam 14:30 untuk meeting tim\`
+• \`!bot jadwalkan setiap hari jam 08:00 selamat pagi tim\`
+• \`!bot jadwalkan setiap senin jam 09:00 briefing mingguan\`
+• \`!bot jadwalkan setiap hari jam 08:00 ai: periksa error log sistem\``);
+            return;
+          }
+
+          let listText = `📋 *Daftar Jadwal & Cron Job Aktif (${jobs.length}):*\n`;
+          jobs.forEach((j, idx) => {
+            listText += `\n${idx + 1}. *${j.title}*
+   • Waktu: ${j.config.readableTime}
+   • Target: ${j.target.includes('@g.us') ? 'Grup' : 'Pribadi'}
+   • Tipe Aksi: ${j.actionType === 'ai_prompt' ? '🤖 AI Task' : '💬 Pesan Teks'}
+   • Dibuat Oleh: ${j.creatorName}
+   • ID: \`${j.id}\`
+   • Total Berjalan: ${j.totalRuns || 0}x`;
+          });
+
+          listText += `\n\nUntuk membatalkan jadwal, ketik:\n\`!bot hapus jadwal <ID>\``;
+          await sendWhatsApp(targetRecipient, listText);
+          return;
+        }
+
+        // 2. Perintah Menghapus / Membatalkan Jadwal
+        const delMatch = userPrompt.match(/^(?:\/hapus-jadwal|hapus\s+jadwal|batal\s+jadwal|\/batal-jadwal)\s+(.+)/i);
+        if (delMatch) {
+          const targetId = delMatch[1].trim();
+          const jobs = loadJobs();
+          const targetJob = jobs.find(j => j.id === targetId || j.id.endsWith(targetId));
+
+          if (!targetJob) {
+            await sendWhatsApp(targetRecipient, `Jadwal dengan ID \`${targetId}\` tidak ditemukan. Ketik \`!bot jadwal\` untuk melihat ID jadwal.`);
+            return;
+          }
+
+          if (!isOwner && targetJob.creator !== senderNumber) {
+            await sendWhatsApp(targetRecipient, `Maaf ${senderName}, Anda hanya dapat membatalkan jadwal yang Anda buat sendiri.`);
+            return;
+          }
+
+          removeJob(targetJob.id);
+          await sendWhatsApp(targetRecipient, `✅ Jadwal *"${targetJob.title}"* (ID: \`${targetJob.id}\`) telah berhasil dibatalkan.`);
+          return;
+        }
+
+        // 3. Deteksi Perintah Pembuatan Jadwal / Pengingat Baru
+        const newSchedule = parseScheduleCommand(userPrompt, senderNumber, senderName, targetRecipient);
+        if (newSchedule) {
+          if (newSchedule.actionType === 'ai_prompt' && !isOwner) {
+            await sendWhatsApp(targetRecipient, `Maaf ${senderName}, penjadwalan tugas eksekusi AI/sistem hanya dapat dibuat oleh Owner.`);
+            return;
+          }
+
+          const saved = addJob(newSchedule);
+          await sendWhatsApp(targetRecipient, `✅ *Jadwal Berhasil Didaftarkan!*
+• Judul: *${saved.title}*
+• Jadwal: ${saved.config.readableTime}
+• Target: ${isGroup ? 'Grup ini' : 'Chat Pribadi'}
+• Tipe: ${saved.actionType === 'ai_prompt' ? '🤖 Eksekusi AI Otomatis' : '💬 Pengingat Teks'}
+• ID: \`${saved.id}\`
+
+Asisten akan otomatis mengirim pesan saat waktunya tiba.
+Ketik \`!bot jadwal\` untuk melihat daftar jadwal.`);
+          return;
+        }
+
+        // 4. Perintah Bantuan
         if (lowerPrompt === '/bantuan' || lowerPrompt === 'bantuan' || lowerPrompt === '/help' || lowerPrompt === 'help') {
           if (isGroup) {
             await sendWhatsApp(targetRecipient, `Halo ${senderName}! Saya adalah asisten AI di grup ini.
 
-Cara menggunakan:
-• Ketik: \`!bot <pertanyaan/perintah>\` atau \`!ai <pertanyaan>\`
-• Contoh: \`!bot buatkan fungsi javascript untuk hitung diskon\`
+*Fitur Tanya & Coding:*
+• \`!bot <pertanyaan/perintah>\` atau \`!ai <pertanyaan>\`
 • Contoh: \`!bot jelaskan perbedaan REST API dan GraphQL\`
 
-Perintah khusus:
-• \`!bot status\` : Cek status asisten
-• \`!bot bantuan\` : Tampilkan panduan ini`);
+*Fitur Pengingat & Cron Job:*
+• \`!bot ingatkan saya 15 menit lagi untuk minum air\`
+• \`!bot ingatkan saya jam 14:30 untuk meeting tim\`
+• \`!bot jadwalkan setiap hari jam 08:00 selamat pagi tim\`
+• \`!bot jadwalkan setiap senin jam 09:00 briefing mingguan\`
+• \`!bot jadwal\` : Cek semua jadwal aktif
+• \`!bot hapus jadwal <ID>\` : Hapus jadwal`);
           } else {
-            await sendWhatsApp(targetRecipient, `Halo Pak Andika! Anda bisa chat santai dengan saya untuk minta bantuan apa saja:
-• Tanya jawab umum atau diskusi coding
-• Minta buatkan file atau skrip di komputer Anda
-• Periksa status server atau proyek
+            await sendWhatsApp(targetRecipient, `Halo Pak Andika! Asisten siap membantu Anda:
 
-Perintah cepat:
-• */status* : Cek status asisten
-• */baru* : Mulai percakapan sesi baru
-• */bantuan* : Bantuan ini`);
+*Tanya Jawab & Coding:*
+• Chat langsung untuk tanya-jawab, diskusi, atau minta buatkan skrip di komputer.
+
+*Fitur Pengingat & Cron Job:*
+• \`ingatkan saya 10 menit lagi untuk cek server\`
+• \`jadwalkan setiap hari jam 08:00 selamat pagi\`
+• \`jadwalkan setiap hari jam 08:00 ai: periksa error log sistem\`
+• \`/jadwal\` : Melihat daftar jadwal aktif
+• \`/status\` : Cek status asisten
+• \`/baru\` : Reset sesi obrolan`);
           }
           return;
         }
 
-        // Perintah Status
+        // 5. Perintah Status
         if (lowerPrompt === '/status' || lowerPrompt === 'status') {
           const curId = getSavedSession() || 'Belum ada sesi aktif';
+          const activeJobs = loadJobs().length;
           await sendWhatsApp(targetRecipient, `Asisten aktif dan siaga.
 Status: ${isProcessing ? 'Sedang memproses tugas' : 'Siap menerima perintah'}
+Jadwal Aktif: ${activeJobs} jadwal berjalan
 Mode: ${isGroup ? 'Grup WhatsApp' : 'Chat Pribadi'}`);
           return;
         }
 
-        // Perintah Reset (Hanya Owner)
+        // 6. Perintah Reset
         if (lowerPrompt === '/baru' || lowerPrompt === 'baru' || lowerPrompt === '/reset' || lowerPrompt === 'reset') {
           if (!isOwner) {
             await sendWhatsApp(targetRecipient, `Maaf ${senderName}, hanya Owner yang dapat mereset sesi percakapan.`);
@@ -504,17 +600,38 @@ Mode: ${isGroup ? 'Grup WhatsApp' : 'Chat Pribadi'}`);
   res.end('Not Found');
 });
 
-// Jalankan HTTP Server & Cloudflare Tunnel
+// Jalankan HTTP Server, Cron Engine, dan Cloudflare Tunnel
 server.listen(PORT, '0.0.0.0', async () => {
   console.log(`====================================================`);
-  console.log(`🚀 Antigravity WhatsApp Assistant Server aktif di port ${PORT}`);
+  console.log(`🚀 Antigravity WhatsApp Assistant + Cron Engine di port ${PORT}`);
   console.log(`📱 Owner Whitelist: ${Array.from(AUTHORIZED_TARGETS).join(', ')}`);
+  console.log(`⏰ Cron Engine: AKTIF (Pengingat, Harian, Mingguan, AI Task)`);
   console.log(`👥 Mode Grup: AKTIF (Trigger: !bot, !ai, @bot)`);
   console.log(`🤖 Model: Gemini Flash via Antigravity CLI`);
   console.log(`====================================================`);
 
   // Sinkronkan daftar grup Fonnte saat startup
   await syncFonnteGroups();
+
+  // Mulai Engine Cron Scheduler
+  startCronScheduler(async (job) => {
+    console.log(`[Cron Trigger] ⏰ Menjalankan tugas "${job.title}" (${job.id}) ke ${job.target}`);
+
+    if (job.actionType === 'ai_prompt') {
+      try {
+        const prompt = `[Tugas Terjadwal]: "${job.payload}"\n(Instruksi: Berikan laporan atau jawaban ringkas, solutif, dan ramah untuk dikirim ke WhatsApp).`;
+        const result = await executeCronWithAntigravity(prompt);
+        const message = `🔔 *Jadwal Terjadwal:* ${job.title}\n\n${result}`;
+        await sendWhatsApp(job.target, message);
+      } catch (err) {
+        console.error(`[Cron Trigger] Error eksekusi AI:`, err.message);
+        await sendWhatsApp(job.target, `⚠️ Terjadi kendala saat menjalankan tugas terjadwal "${job.title}": ${err.message}`);
+      }
+    } else {
+      const message = `⏰ *PENGINGAT TERJADWAL*\n\n${job.payload}\n\n_(Pengingat dari: ${job.creatorName})_`;
+      await sendWhatsApp(job.target, message);
+    }
+  });
 
   // Mulai Cloudflare Tunnel
   if (fs.existsSync(CLOUDFLARED_PATH)) {
@@ -531,7 +648,6 @@ server.listen(PORT, '0.0.0.0', async () => {
         const tunnelUrl = match[0];
         console.log(`\n🎉 TUNNEL URL BERHASIL DIBUAT: ${tunnelUrl}\n`);
 
-        // Update Webhook Fonnte secara otomatis (personal + quick + group)
         await updateFonnteWebhook(tunnelUrl);
       }
     });
