@@ -29,10 +29,10 @@ jobs:
         run: |
           cat LAPORAN_LOG_HARIAN.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Kirim Notifikasi ke WhatsApp
+      - name: Kirim Notifikasi ke WhatsApp via Fonnte
         env:
-          WA_PHONE: ${{ secrets.WA_PHONE }}
-          WA_APIKEY: ${{ secrets.WA_APIKEY }}
+          FONNTE_TOKEN: ${{ secrets.FONNTE_TOKEN }}
+          FONNTE_TARGET: ${{ secrets.FONNTE_TARGET }}
         run: |
           node send-wa.mjs
 

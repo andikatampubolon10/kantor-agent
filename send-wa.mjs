@@ -2,11 +2,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const phone = process.env.WA_PHONE?.trim();
-const apikey = process.env.WA_APIKEY?.trim();
+const token = process.env.FONNTE_TOKEN?.trim() || 'HUw3Ny3R4EaW1jHua4ki';
+const target = process.env.FONNTE_TARGET?.trim() || '6282163850914';
 
-if (!phone || !apikey) {
-  console.log('ℹ️ WA_PHONE atau WA_APIKEY belum diatur di GitHub Secrets. Melewati pengiriman WhatsApp.');
+if (!token) {
+  console.log('ℹ️ FONNTE_TOKEN belum diatur. Melewati pengiriman WhatsApp.');
   process.exit(0);
 }
 
@@ -31,18 +31,31 @@ const message = `🔔 *LAPORAN HARIAN KANTOR AGENT*
 📄 *Laporan Lengkap:*
 https://github.com/andikatampubolon10/kantor-agent/blob/main/LAPORAN_LOG_HARIAN.md`;
 
-console.log(`Mengirim notifikasi WhatsApp ke nomor: ${phone.slice(0, 4)}****...`);
-
-const url = `https://api.callmebot.com/whatsapp.php?phone=${encodeURIComponent(phone)}&text=${encodeURIComponent(message)}&apikey=${encodeURIComponent(apikey)}`;
+console.log(`Mengirim pesan WhatsApp via Fonnte ke ${target.slice(0, 5)}****...`);
 
 try {
-  const res = await fetch(url);
-  const body = await res.text();
-  if (res.ok && !body.toLowerCase().includes('error')) {
-    console.log('✅ Pesan WhatsApp berhasil dikirim!');
+  const formData = new URLSearchParams();
+  formData.append('target', target);
+  formData.append('message', message);
+  formData.append('countryCode', '62');
+
+  const res = await fetch('https://api.fonnte.com/send', {
+    method: 'POST',
+    headers: {
+      'Authorization': token
+    },
+    body: formData
+  });
+
+  const data = await res.json();
+  if (data.status) {
+    console.log('✅ Pesan WhatsApp berhasil dikirim via Fonnte!');
   } else {
-    console.log(`⚠️ Respon API: ${body}`);
+    console.log('⚠️ Fonnte response:', data.reason || JSON.stringify(data));
+    if (data.reason?.toLowerCase().includes('device disconnect') || data.reason?.toLowerCase().includes('not connect')) {
+      console.log('👉 Catatan: Jangan lupa scan QR code di dashboard fonnte.com agar WhatsApp terhubung!');
+    }
   }
 } catch (err) {
-  console.error(`❌ Terjadi kesalahan saat mengirim ke WhatsApp: ${err.message}`);
+  console.error(`❌ Terjadi kesalahan saat menghubungi API Fonnte: ${err.message}`);
 }
