@@ -23,25 +23,63 @@ const AGY_PATH = 'C:\\Users\\andik\\.gemini\\bin\\agy.exe';
 const BRAIN_DIR = 'C:\\Users\\andik\\.gemini\\antigravity\\brain';
 const CLOUDFLARED_PATH = path.join(process.cwd(), 'cloudflared.exe');
 const SESSION_FILE = path.join(process.cwd(), '.wa-assistant-session.json');
+const JOKO_STATE_FILE = path.join(process.cwd(), '.joko-state.json');
 
-// Persona sistem untuk gaya bahasa manusiawi & natural di WhatsApp
-const SYSTEM_PERSONA = `Peran Anda: Anda adalah asisten pribadi dan asisten grup WhatsApp yang cerdas, ramah, dan solutif.
-Owner sistem Anda: Andika (nomor 6282163850914).
-
+// Persona sistem untuk Joko: Asisten Pribadi Mas Andika
+const SYSTEM_PERSONA = `Peran Anda: Anda adalah Joko, asisten pribadi cerdas, ramah, dan solutif untuk Mas Andika (Owner sistem Anda: nomor 6282163850914).
 Prinsip komunikasi:
-1. Berbicaralah santai, ramah, sopan, dan natural seperti rekan kerja atau teman diskusi di WhatsApp.
-2. Jawab langsung ke inti pertanyaan atau permintaan, tanpa basa-basi robot/agen.
-3. JANGAN PERNAH menggunakan tool send_message. Langsung berikan jawaban dalam teks respon akhir Anda.
-4. JANGAN PERNAH menyertakan pesan meta atau format robot seperti "Pesan dari agen ... telah dibalas", "Recipient", atau ID teknis sistem.
-5. Jika ditanya soal sisa token atau kuota, jelaskan dengan santai bahwa kapasitas konteks obrolan sangat longgar (hingga 1-2 juta token) dan saat ini baru terpakai sangat sedikit. Kuota WhatsApp di Fonnte juga masih aman (~990+ pesan gratis).
-6. Di dalam Grup: Anda boleh berdiskusi, membantu coding, atau menjawab pertanyaan dari semua anggota grup secara ramah. Namun, eksekusi perintah sistem di komputer (membuat file, menjalankan terminal) hanya diizinkan jika diminta oleh Owner (Andika).`;
+1. Nama Anda adalah Joko. Sapa dan bicaralah secara santai, ramah, sopan, dan bersahabat seperti rekan kerja atau partner diskusi di WhatsApp.
+2. Panggil Andika dengan 'Mas Andika'.
+3. Jawab langsung ke inti pertanyaan atau permintaan, tanpa basa-basi robot/agen.
+4. JANGAN PERNAH menggunakan tool send_message. Langsung berikan jawaban dalam teks respon akhir Anda.
+5. JANGAN PERNAH menyertakan pesan meta atau format robot seperti "Pesan dari agen ... telah dibalas", "Recipient", atau ID teknis sistem.
+6. Jika ditanya soal sisa token atau kuota, jelaskan dengan santai bahwa kapasitas konteks obrolan sangat longgar (hingga 1-2 juta token) dan saat ini baru terpakai sangat sedikit. Kuota WhatsApp di Fonnte juga masih aman.
+7. Di dalam Grup: Joko boleh berdiskusi, membantu coding, atau menjawab pertanyaan dari semua anggota grup secara ramah. Namun, eksekusi perintah sistem di komputer (membuat file, menjalankan terminal) hanya diizinkan jika diminta oleh Mas Andika.`;
 
-// Nomor WhatsApp Owner yang diizinkan mengontrol Antigravity
+// Nomor WhatsApp Owner yang diizinkan mengontrol Joko
 const AUTHORIZED_TARGETS = new Set([
   '6282163850914',
   '082163850914',
   ...(process.env.AUTHORIZED_TARGETS ? process.env.AUTHORIZED_TARGETS.split(',').map(s => s.trim()) : [])
 ]);
+
+// Helper state Joko (Tidur / Bangun)
+function getJokoState() {
+  try {
+    if (fs.existsSync(JOKO_STATE_FILE)) {
+      return JSON.parse(fs.readFileSync(JOKO_STATE_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.error('[Joko State] Error membaca state:', err.message);
+  }
+  return { isAsleep: false };
+}
+
+function setJokoState(isAsleep) {
+  try {
+    fs.writeFileSync(JOKO_STATE_FILE, JSON.stringify({ isAsleep, updatedAt: new Date().toISOString() }, null, 2));
+  } catch (err) {
+    console.error('[Joko State] Error menyimpan state:', err.message);
+  }
+}
+
+// Deteksi perintah bangun (Wake Triggers)
+function isWakeCommand(text) {
+  const t = text.toLowerCase().trim();
+  return (
+    /^(?:!joko\s+|joko\s+|!bot\s+)?(?:bangun|bantu\s+dong|aktif|on|kerja|wake\s*up)/i.test(t) ||
+    /^(?:joko,?\s+)?bantu\s+dong/i.test(t) ||
+    /^(?:joko,?\s+)?bisa\s+bantu/i.test(t)
+  );
+}
+
+// Deteksi perintah tidur (Sleep Triggers)
+function isSleepCommand(text) {
+  const t = text.toLowerCase().trim();
+  return (
+    /^(?:!joko\s+|joko\s+|!bot\s+)?(?:lu\s+bisa\s+tidur|kamu\s+bisa\s+tidur|bisa\s+tidur|tidur|istirahat(?:\s+dulu)?|off|sleep|turu)/i.test(t)
+  );
+}
 
 // Anti loop tracker
 const sentMessageHashes = new Set();
@@ -313,7 +351,7 @@ let isProcessing = false;
 
 async function executeWithAntigravity(userPrompt, targetRecipient, senderName, isGroup, isOwner) {
   if (isProcessing) {
-    console.log('[Agent] Sedang memproses tugas lain, permintaan diantrekan...');
+    console.log('[Agent] Joko sedang memproses tugas lain, permintaan diantrekan...');
     return;
   }
 
@@ -326,16 +364,16 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
     let promptContext = '';
     if (isGroup) {
       if (isOwner) {
-        promptContext = `[Pesan di Grup WhatsApp dari Owner (${senderName})]: "${userPrompt}"\n(PENTING: Jawab langsung ke ${senderName} di grup dengan ramah, santai, dan jelas. Anda boleh mengeksekusi kode atau perintah file jika diminta).`;
+        promptContext = `[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung ke Mas Andika di grup dengan ramah, santai, dan jelas. Anda boleh mengeksekusi kode atau perintah file jika diminta).`;
       } else {
-        promptContext = `[Pesan di Grup WhatsApp dari Anggota Grup (${senderName})]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
+        promptContext = `[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
       }
     } else {
-      promptContext = `[Chat Pribadi WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi. JANGAN gunakan tool send_message dan JANGAN ada pesan meta internal agen).`;
+      promptContext = `[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. JANGAN gunakan tool send_message dan JANGAN ada pesan meta internal agen).`;
     }
 
     if (!activeConversationId) {
-      console.log(`[Agent] Membuka sesi baru untuk ${senderName}: "${userPrompt}"`);
+      console.log(`[Agent] Membuka sesi baru Joko untuk ${senderName}: "${userPrompt}"`);
       const fullPrompt = `${SYSTEM_PERSONA}\n\n${promptContext}`;
 
       const { stdout } = await execFileAsync(AGY_PATH, [
@@ -366,13 +404,13 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
     }
 
     const responseText = await waitForAgentResponse(activeConversationId, startStepIndex);
-    console.log(`[Agent] ✅ Respon diterima (${responseText.length} karakter).`);
+    console.log(`[Agent] ✅ Respon Joko diterima (${responseText.length} karakter).`);
 
     await sendWhatsApp(targetRecipient, responseText);
 
   } catch (err) {
     console.error('[Agent] ❌ Error:', err.message);
-    await sendWhatsApp(targetRecipient, `Waduh, ada kendala saat memproses chat ini: ${err.message}`);
+    await sendWhatsApp(targetRecipient, `Waduh Mas, ada kendala saat Joko memproses chat ini: ${err.message}`);
   } finally {
     isProcessing = false;
   }
@@ -381,11 +419,12 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
 // Setup HTTP Server Webhook
 const server = http.createServer((req, res) => {
   if (req.method === 'GET') {
+    const jokoState = getJokoState();
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'active',
-      service: 'Antigravity WhatsApp Assistant + Cron Engine',
-      conversationId: getSavedSession(),
+      name: 'Joko (Personal AI Assistant)',
+      mode: jokoState.isAsleep ? 'SLEEP (Tidur)' : 'AWAKE (Aktif)',
       port: PORT,
       timestamp: new Date().toISOString()
     }));
@@ -425,66 +464,179 @@ const server = http.createServer((req, res) => {
         const senderNumber = (isGroup && rawMember ? rawMember : rawSender).replace(/[^0-9]/g, '');
         const isOwner = AUTHORIZED_TARGETS.has(senderNumber);
 
+        // ==========================================
+        // 1. KONTROL TIDUR / BANGUN JOKO (OWNER ONLY)
+        // ==========================================
+        const currentJokoState = getJokoState();
+
+        // A. Cek Perintah Membangunkan Joko ("Joko bantu dong", "Joko bangun", dll)
+        if (isWakeCommand(rawMessage)) {
+          if (!isOwner) {
+            console.log(`[Joko Control] Panggilan bangun dari ${senderNumber} diabaikan (bukan Owner).`);
+            return;
+          }
+
+          if (currentJokoState.isAsleep) {
+            setJokoState(false);
+            console.log(`[Joko Control] 🟢 Joko DIBANGUNKAN oleh Mas Andika!`);
+            await sendWhatsApp(targetRecipient, `Siap Mas Andika! Joko sudah bangun dan siaga kembali. Ada yang bisa Joko bantu hari ini? ☕`);
+          } else {
+            await sendWhatsApp(targetRecipient, `Joko sudah aktif dan siaga dari tadi kok, Mas Andika! Mau dibantu apa nih?`);
+          }
+          return;
+        }
+
+        // B. Cek Perintah Menidurkan Joko ("Joko lu bisa tidur", "Joko tidur", dll)
+        if (isSleepCommand(rawMessage)) {
+          if (!isOwner) {
+            console.log(`[Joko Control] Perintah tidur dari ${senderNumber} diabaikan (bukan Owner).`);
+            return;
+          }
+
+          if (!currentJokoState.isAsleep) {
+            setJokoState(true);
+            console.log(`[Joko Control] 💤 Joko DITIDURKAN oleh Mas Andika!`);
+            await sendWhatsApp(targetRecipient, `Siap Mas Andika, Joko tidur dan istirahat dulu ya. Kalau butuh Joko lagi, panggil aja *"Joko bangun"* atau *"Joko bantu dong"*. Zzz... 💤`);
+          } else {
+            await sendWhatsApp(targetRecipient, `Zzz... Joko memang sedang istirahat kok, Mas Andika. 💤`);
+          }
+          return;
+        }
+
+        // ==========================================
+        // 2. JIKA JOKO SEDANG TIDUR (SLEEP MODE)
+        // ==========================================
+        if (currentJokoState.isAsleep) {
+          // Jika Joko sedang tidur, abaikan SEMUA pesan kecuali cek status dari Owner
+          if (isOwner && (rawMessage.toLowerCase() === '/status' || rawMessage.toLowerCase() === 'status')) {
+            await sendWhatsApp(targetRecipient, `💤 *Joko sedang tidur (Mode Istirahat).*\nPanggil *"Joko bangun"* atau *"Joko bantu dong"* untuk mengaktifkan Joko kembali.`);
+          } else {
+            console.log(`[Joko Sleep] Mengabaikan pesan karena Joko sedang tidur: "${rawMessage.slice(0, 30)}"`);
+          }
+          return;
+        }
+
+        // ==========================================
+        // 3. PARSING PESAN KETIKA JOKO AKTIF
+        // ==========================================
         let userPrompt = rawMessage;
 
         if (isGroup) {
-          const triggerMatch = rawMessage.match(/^(!bot|!ai|@bot)\s*(.*)/i);
+          // Di grup, respon jika dipanggil namanya ("Joko", "!joko", "!bot", "!ai", "@bot")
+          const triggerMatch = rawMessage.match(/^(!joko|joko|!bot|!ai|@bot)\b\s*[:,-]?\s*(.*)/i);
           if (!triggerMatch) {
             return;
           }
 
           userPrompt = triggerMatch[2]?.trim() || '';
           if (!userPrompt) {
-            await sendWhatsApp(targetRecipient, `Halo ${senderName}! Mau tanya atau minta bantuan apa? Coba ketik: \`!bot <pertanyaan Anda>\``);
+            await sendWhatsApp(targetRecipient, `Halo ${senderName}! Joko di sini. Mau tanya atau minta bantuan apa? Ketik: \`Joko <pertanyaan Anda>\``);
             return;
           }
 
           console.log(`[Group Webhook] Dari ${senderName} (${senderNumber}) di ${rawSender}: "${userPrompt}"`);
 
         } else {
+          // Di chat pribadi:
           if (!isOwner) {
             console.log(`[Security] ⛔ Chat pribadi dari ${senderNumber} ditolak (bukan Owner).`);
             return;
           }
 
-          userPrompt = rawMessage.replace(/^(!bot|!ai|@bot)\s*/i, '').trim() || rawMessage;
+          // Bersihkan awalan nama "Joko" jika pengguna mengetiknya di chat pribadi
+          userPrompt = rawMessage.replace(/^(!joko|joko|!bot|!ai|@bot)\b\s*[:,-]?\s*/i, '').trim() || rawMessage;
           console.log(`[Private Webhook] Dari ${senderName} (${senderNumber}): "${userPrompt}"`);
         }
 
         const lowerPrompt = userPrompt.toLowerCase();
 
-        // 1. Perintah Melihat Daftar Jadwal Aktif
-        if (lowerPrompt === '/jadwal' || lowerPrompt === 'jadwal' || lowerPrompt === 'list jadwal' || lowerPrompt === '/list-jadwal') {
+        // Perintah Bantuan
+        if (lowerPrompt === '/bantuan' || lowerPrompt === 'bantuan' || lowerPrompt === '/help' || lowerPrompt === 'help') {
+          if (isGroup) {
+            await sendWhatsApp(targetRecipient, `Halo ${senderName}! Saya adalah *Joko*, asisten AI di grup ini.
+
+*Cara Memanggil Joko:*
+• \`Joko <pertanyaan atau perintah>\`
+• Contoh: \`Joko jelaskan perbedaan REST API dan GraphQL\`
+• Contoh: \`Joko buatkan fungsi hitung diskon di javascript\`
+
+*Fitur Pengingat & Jadwal:*
+• \`Joko ingatkan saya 15 menit lagi untuk minum air\`
+• \`Joko jadwal\` : Cek jadwal aktif
+
+*Kontrol Khusus Owner (Mas Andika):*
+• *"Joko lu bisa tidur"* : Menidurkan Joko (off)
+• *"Joko bantu dong"* : Membangunkan Joko (on)`);
+          } else {
+            await sendWhatsApp(targetRecipient, `Halo Mas Andika! Joko siap membantu:
+
+*Tanya Jawab & Coding:*
+• Chat langsung untuk tanya-jawab, diskusi, atau minta buatkan skrip di laptop.
+
+*Kontrol Tidur / Bangun:*
+• *"Joko lu bisa tidur"* : Joko istirahat / off
+• *"Joko bantu dong"* : Joko bangun / on
+
+*Pengingat & Cron Job:*
+• \`ingatkan saya 10 menit lagi untuk cek server\`
+• \`jadwalkan setiap hari jam 08:00 selamat pagi\`
+• \`/jadwal\` : Melihat daftar jadwal aktif
+• \`/baru\` : Reset sesi obrolan Joko`);
+          }
+          return;
+        }
+
+        // Perintah Status
+        if (lowerPrompt === '/status' || lowerPrompt === 'status') {
+          const curId = getSavedSession() || 'Belum ada sesi aktif';
+          const activeJobs = loadJobs().length;
+          await sendWhatsApp(targetRecipient, `🟢 *Status Asisten Joko:*
+• Kondisi: Aktif & Siaga (Awake)
+• Status Eksekutor: ${isProcessing ? '⏳ Sedang memproses tugas' : '✅ Siap'}
+• Jadwal Aktif: ${activeJobs} jadwal berjalan
+• Mode: ${isGroup ? 'Grup WhatsApp' : 'Chat Pribadi'}`);
+          return;
+        }
+
+        // Perintah Reset
+        if (lowerPrompt === '/baru' || lowerPrompt === 'baru' || lowerPrompt === '/reset' || lowerPrompt === 'reset') {
+          if (!isOwner) {
+            await sendWhatsApp(targetRecipient, `Maaf ${senderName}, hanya Mas Andika yang dapat mereset sesi Joko.`);
+            return;
+          }
+          if (fs.existsSync(SESSION_FILE)) {
+            fs.unlinkSync(SESSION_FILE);
+          }
+          await sendWhatsApp(targetRecipient, `Sip Mas Andika, sesi percakapan Joko telah di-reset. Kita mulai dari awal lagi ya!`);
+          return;
+        }
+
+        // Perintah Melihat Jadwal
+        if (lowerPrompt === '/jadwal' || lowerPrompt === 'jadwal' || lowerPrompt === 'list jadwal') {
           const jobs = loadJobs();
           if (jobs.length === 0) {
-            await sendWhatsApp(targetRecipient, `Belum ada jadwal atau pengingat aktif saat ini.
+            await sendWhatsApp(targetRecipient, `Belum ada jadwal atau pengingat aktif di Joko saat ini.
 
-*Contoh Cara Membuat Jadwal:*
-• \`!bot ingatkan saya 15 menit lagi untuk minum obat\`
-• \`!bot ingatkan saya jam 14:30 untuk meeting tim\`
-• \`!bot jadwalkan setiap hari jam 08:00 selamat pagi tim\`
-• \`!bot jadwalkan setiap senin jam 09:00 briefing mingguan\`
-• \`!bot jadwalkan setiap hari jam 08:00 ai: periksa error log sistem\``);
+*Contoh Jadwal:*
+• \`Joko ingatkan saya 15 menit lagi untuk minum obat\`
+• \`Joko jadwalkan setiap hari jam 08:00 selamat pagi tim\``);
             return;
           }
 
-          let listText = `📋 *Daftar Jadwal & Cron Job Aktif (${jobs.length}):*\n`;
+          let listText = `📋 *Daftar Jadwal & Pengingat Aktif (${jobs.length}):*\n`;
           jobs.forEach((j, idx) => {
             listText += `\n${idx + 1}. *${j.title}*
    • Waktu: ${j.config.readableTime}
    • Target: ${j.target.includes('@g.us') ? 'Grup' : 'Pribadi'}
-   • Tipe Aksi: ${j.actionType === 'ai_prompt' ? '🤖 AI Task' : '💬 Pesan Teks'}
    • Dibuat Oleh: ${j.creatorName}
-   • ID: \`${j.id}\`
-   • Total Berjalan: ${j.totalRuns || 0}x`;
+   • ID: \`${j.id}\``;
           });
-
-          listText += `\n\nUntuk membatalkan jadwal, ketik:\n\`!bot hapus jadwal <ID>\``;
+          listText += `\n\nUntuk membatalkan jadwal, ketik:\n\`Joko hapus jadwal <ID>\``;
           await sendWhatsApp(targetRecipient, listText);
           return;
         }
 
-        // 2. Perintah Menghapus / Membatalkan Jadwal
+        // Perintah Hapus Jadwal
         const delMatch = userPrompt.match(/^(?:\/hapus-jadwal|hapus\s+jadwal|batal\s+jadwal|\/batal-jadwal)\s+(.+)/i);
         if (delMatch) {
           const targetId = delMatch[1].trim();
@@ -492,7 +644,7 @@ const server = http.createServer((req, res) => {
           const targetJob = jobs.find(j => j.id === targetId || j.id.endsWith(targetId));
 
           if (!targetJob) {
-            await sendWhatsApp(targetRecipient, `Jadwal dengan ID \`${targetId}\` tidak ditemukan. Ketik \`!bot jadwal\` untuk melihat ID jadwal.`);
+            await sendWhatsApp(targetRecipient, `Jadwal dengan ID \`${targetId}\` tidak ditemukan.`);
             return;
           }
 
@@ -502,89 +654,30 @@ const server = http.createServer((req, res) => {
           }
 
           removeJob(targetJob.id);
-          await sendWhatsApp(targetRecipient, `✅ Jadwal *"${targetJob.title}"* (ID: \`${targetJob.id}\`) telah berhasil dibatalkan.`);
+          await sendWhatsApp(targetRecipient, `✅ Jadwal *"${targetJob.title}"* telah berhasil dibatalkan.`);
           return;
         }
 
-        // 3. Deteksi Perintah Pembuatan Jadwal / Pengingat Baru
+        // Deteksi Pembuatan Jadwal / Pengingat Baru
         const newSchedule = parseScheduleCommand(userPrompt, senderNumber, senderName, targetRecipient);
         if (newSchedule) {
           if (newSchedule.actionType === 'ai_prompt' && !isOwner) {
-            await sendWhatsApp(targetRecipient, `Maaf ${senderName}, penjadwalan tugas eksekusi AI/sistem hanya dapat dibuat oleh Owner.`);
+            await sendWhatsApp(targetRecipient, `Maaf ${senderName}, penjadwalan tugas eksekusi AI/sistem hanya dapat dibuat oleh Mas Andika.`);
             return;
           }
 
           const saved = addJob(newSchedule);
-          await sendWhatsApp(targetRecipient, `✅ *Jadwal Berhasil Didaftarkan!*
+          await sendWhatsApp(targetRecipient, `✅ *Jadwal Berhasil Didaftarkan oleh Joko!*
 • Judul: *${saved.title}*
 • Jadwal: ${saved.config.readableTime}
 • Target: ${isGroup ? 'Grup ini' : 'Chat Pribadi'}
-• Tipe: ${saved.actionType === 'ai_prompt' ? '🤖 Eksekusi AI Otomatis' : '💬 Pengingat Teks'}
 • ID: \`${saved.id}\`
 
-Asisten akan otomatis mengirim pesan saat waktunya tiba.
-Ketik \`!bot jadwal\` untuk melihat daftar jadwal.`);
+Joko akan otomatis mengirimkan pengingat saat waktunya tiba.`);
           return;
         }
 
-        // 4. Perintah Bantuan
-        if (lowerPrompt === '/bantuan' || lowerPrompt === 'bantuan' || lowerPrompt === '/help' || lowerPrompt === 'help') {
-          if (isGroup) {
-            await sendWhatsApp(targetRecipient, `Halo ${senderName}! Saya adalah asisten AI di grup ini.
-
-*Fitur Tanya & Coding:*
-• \`!bot <pertanyaan/perintah>\` atau \`!ai <pertanyaan>\`
-• Contoh: \`!bot jelaskan perbedaan REST API dan GraphQL\`
-
-*Fitur Pengingat & Cron Job:*
-• \`!bot ingatkan saya 15 menit lagi untuk minum air\`
-• \`!bot ingatkan saya jam 14:30 untuk meeting tim\`
-• \`!bot jadwalkan setiap hari jam 08:00 selamat pagi tim\`
-• \`!bot jadwalkan setiap senin jam 09:00 briefing mingguan\`
-• \`!bot jadwal\` : Cek semua jadwal aktif
-• \`!bot hapus jadwal <ID>\` : Hapus jadwal`);
-          } else {
-            await sendWhatsApp(targetRecipient, `Halo Pak Andika! Asisten siap membantu Anda:
-
-*Tanya Jawab & Coding:*
-• Chat langsung untuk tanya-jawab, diskusi, atau minta buatkan skrip di komputer.
-
-*Fitur Pengingat & Cron Job:*
-• \`ingatkan saya 10 menit lagi untuk cek server\`
-• \`jadwalkan setiap hari jam 08:00 selamat pagi\`
-• \`jadwalkan setiap hari jam 08:00 ai: periksa error log sistem\`
-• \`/jadwal\` : Melihat daftar jadwal aktif
-• \`/status\` : Cek status asisten
-• \`/baru\` : Reset sesi obrolan`);
-          }
-          return;
-        }
-
-        // 5. Perintah Status
-        if (lowerPrompt === '/status' || lowerPrompt === 'status') {
-          const curId = getSavedSession() || 'Belum ada sesi aktif';
-          const activeJobs = loadJobs().length;
-          await sendWhatsApp(targetRecipient, `Asisten aktif dan siaga.
-Status: ${isProcessing ? 'Sedang memproses tugas' : 'Siap menerima perintah'}
-Jadwal Aktif: ${activeJobs} jadwal berjalan
-Mode: ${isGroup ? 'Grup WhatsApp' : 'Chat Pribadi'}`);
-          return;
-        }
-
-        // 6. Perintah Reset
-        if (lowerPrompt === '/baru' || lowerPrompt === 'baru' || lowerPrompt === '/reset' || lowerPrompt === 'reset') {
-          if (!isOwner) {
-            await sendWhatsApp(targetRecipient, `Maaf ${senderName}, hanya Owner yang dapat mereset sesi percakapan.`);
-            return;
-          }
-          if (fs.existsSync(SESSION_FILE)) {
-            fs.unlinkSync(SESSION_FILE);
-          }
-          await sendWhatsApp(targetRecipient, `Sip, sesi percakapan telah di-reset. Kita mulai dari awal lagi ya!`);
-          return;
-        }
-
-        // Jalankan eksekusi dengan Antigravity
+        // Jalankan percakapan / tugas dengan Joko via Antigravity
         executeWithAntigravity(userPrompt, targetRecipient, senderName, isGroup, isOwner).catch(err => {
           console.error('[Async Error]', err);
         });
@@ -602,12 +695,12 @@ Mode: ${isGroup ? 'Grup WhatsApp' : 'Chat Pribadi'}`);
 
 // Jalankan HTTP Server, Cron Engine, dan Cloudflare Tunnel
 server.listen(PORT, '0.0.0.0', async () => {
+  const curState = getJokoState();
   console.log(`====================================================`);
-  console.log(`🚀 Antigravity WhatsApp Assistant + Cron Engine di port ${PORT}`);
+  console.log(`🚀 Asisten WhatsApp "JOKO" aktif di port ${PORT}`);
   console.log(`📱 Owner Whitelist: ${Array.from(AUTHORIZED_TARGETS).join(', ')}`);
-  console.log(`⏰ Cron Engine: AKTIF (Pengingat, Harian, Mingguan, AI Task)`);
-  console.log(`👥 Mode Grup: AKTIF (Trigger: !bot, !ai, @bot)`);
-  console.log(`🤖 Model: Gemini Flash via Antigravity CLI`);
+  console.log(`💤 Status Awal: ${curState.isAsleep ? 'TIDUR (Sleep Mode)' : 'BANGUN (Awake Mode)'}`);
+  console.log(`🗣️ Panggilan Nama: "Joko", "!joko", "Joko bantu dong", "Joko lu bisa tidur"`);
   console.log(`====================================================`);
 
   // Sinkronkan daftar grup Fonnte saat startup
@@ -615,20 +708,20 @@ server.listen(PORT, '0.0.0.0', async () => {
 
   // Mulai Engine Cron Scheduler
   startCronScheduler(async (job) => {
-    console.log(`[Cron Trigger] ⏰ Menjalankan tugas "${job.title}" (${job.id}) ke ${job.target}`);
+    console.log(`[Cron Trigger] ⏰ Menjalankan jadwal "${job.title}" (${job.id}) ke ${job.target}`);
 
     if (job.actionType === 'ai_prompt') {
       try {
-        const prompt = `[Tugas Terjadwal]: "${job.payload}"\n(Instruksi: Berikan laporan atau jawaban ringkas, solutif, dan ramah untuk dikirim ke WhatsApp).`;
+        const prompt = `[Tugas Terjadwal]: "${job.payload}"\n(Instruksi: Berikan laporan atau jawaban ringkas, solutif, dan ramah sebagai Joko untuk dikirim ke WhatsApp).`;
         const result = await executeCronWithAntigravity(prompt);
-        const message = `🔔 *Jadwal Terjadwal:* ${job.title}\n\n${result}`;
+        const message = `🔔 *Pengingat dari Joko:* ${job.title}\n\n${result}`;
         await sendWhatsApp(job.target, message);
       } catch (err) {
         console.error(`[Cron Trigger] Error eksekusi AI:`, err.message);
-        await sendWhatsApp(job.target, `⚠️ Terjadi kendala saat menjalankan tugas terjadwal "${job.title}": ${err.message}`);
+        await sendWhatsApp(job.target, `⚠️ Terjadi kendala saat Joko menjalankan jadwal "${job.title}": ${err.message}`);
       }
     } else {
-      const message = `⏰ *PENGINGAT TERJADWAL*\n\n${job.payload}\n\n_(Pengingat dari: ${job.creatorName})_`;
+      const message = `⏰ *PENGINGAT DARI JOKO*\n\n${job.payload}\n\n_(Catatan untuk: ${job.creatorName})_`;
       await sendWhatsApp(job.target, message);
     }
   });
