@@ -8,3 +8,4 @@ for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8795') do (
 )
 echo ✅ Server dan tunnel telah dihentikan.
 timeout /t 3
+

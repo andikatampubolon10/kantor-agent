@@ -6,3 +6,4 @@ echo   Memulai Antigravity WhatsApp Assistant...
 echo ====================================================
 "C:\Program Files\nodejs\node.exe" wa-assistant.mjs
 pause
+
