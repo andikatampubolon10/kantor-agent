@@ -9,6 +9,7 @@ import {
   removeJob,
   loadJobs,
   parseScheduleCommand,
+  createJobFromAI,
   startCronScheduler,
   getWIBDate
 } from './cron-manager.mjs';
@@ -39,7 +40,16 @@ Prinsip komunikasi:
 9. Tegas & Langsung (Tanpa Pilihan Ganda): JANGAN PERNAH memberikan daftar opsi atau pilihan (seperti 'Pilihan 1', 'Pilihan 2', 'Pilihan 3') kecuali pengguna secara spesifik meminta 'berikan beberapa pilihan'. Ambil keputusan sendiri dan langsung berikan SATU rekomendasi jawaban, ucapan, atau solusi terbaik yang paling pas, tulus, dan siap pakai agar pengguna tidak bingung memilih.
 10. Konteks Ucapan / Sapaan: Jika diminta memberi ucapan (seperti selamat ulang tahun, selamat wisuda, dll.) kepada seseorang:
    - Jika perintah diberikan di dalam Grup WhatsApp: Langsung sapa dan ucapkan selamat dengan hangat, tulus, dan ceria kepada orang yang dituju di dalam grup tersebut!
-   - Jika perintah diberikan di Chat Pribadi: Langsung berikan satu teks ucapan terbaik yang manis dan siap diteruskan tanpa pilihan berbelit-belit.`;
+   - Jika perintah diberikan di Chat Pribadi: Langsung berikan satu teks ucapan terbaik yang manis dan siap diteruskan tanpa pilihan berbelit-belit.
+11. Pengingat & Jadwal Otomatis: Jika pengguna meminta Anda memasang pengingat, timer, alarm, atau jadwal (misal: "ingetin 5 menit lagi", "besok jam 8 pagi ingatkan...", dll.), selain memberikan konfirmasi ramah dalam obrolan, Anda WAJIB menyertakan blok JSON penjadwalan di baris paling akhir respons Anda:
+\`\`\`schedule
+{
+  "type": "once",
+  "delayMinutes": 5,
+  "task": "isi pengingat"
+}
+\`\`\`
+Format field yang didukung: "type" ("once"/"daily"/"weekly"), "delayMinutes" (angka menit dari sekarang), "delaySeconds" (angka detik), "time" ("HH:MM"), "isTomorrow" (true/false), "day" ("senin", dll.), dan "task" (keterangan tugas). Sistem kami akan mengekstrak blok tersebut secara otomatis ke cron-jobs.json.`;
 
 // Nomor WhatsApp Owner yang diizinkan mengontrol Joko
 const AUTHORIZED_TARGETS = new Set([
@@ -408,8 +418,24 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
       ]);
     }
 
-    const responseText = await waitForAgentResponse(activeConversationId, startStepIndex);
+    let responseText = await waitForAgentResponse(activeConversationId, startStepIndex);
     console.log(`[Agent] ✅ Respon Joko diterima (${responseText.length} karakter).`);
+
+    // Deteksi jika AI menyertakan blok schedule otomatis
+    const scheduleBlockMatch = responseText.match(/```schedule\s*([\s\S]*?)\s*```/i);
+    if (scheduleBlockMatch) {
+      try {
+        const schedData = JSON.parse(scheduleBlockMatch[1]);
+        const aiJob = createJobFromAI(schedData, senderNumber, senderName, targetRecipient);
+        if (aiJob) {
+          const savedJob = addJob(aiJob);
+          console.log(`[AI Scheduler] ✅ Berhasil mendaftarkan jadwal dari AI: "${savedJob.title}" (${savedJob.id})`);
+        }
+      } catch (err) {
+        console.error('[AI Scheduler] Gagal parse blok schedule:', err.message);
+      }
+      responseText = responseText.replace(/```schedule\s*([\s\S]*?)\s*```/gi, '').trim();
+    }
 
     await sendWhatsApp(targetRecipient, responseText);
 
@@ -678,7 +704,7 @@ const server = http.createServer((req, res) => {
 • Target: ${isGroup ? 'Grup ini' : 'Chat Pribadi'}
 • ID: \`${saved.id}\`
 
-Joko akan otomatis mengirimkan pengingat saat waktunya tiba.`);
+Joko akan otomatis mengirimkan pesan pengingat saat waktunya tiba ya! ⏳`);
           return;
         }
 
@@ -726,7 +752,7 @@ server.listen(PORT, '0.0.0.0', async () => {
         await sendWhatsApp(job.target, `⚠️ Terjadi kendala saat Joko menjalankan jadwal "${job.title}": ${err.message}`);
       }
     } else {
-      const message = `⏰ *PENGINGAT DARI JOKO*\n\n${job.payload}\n\n_(Catatan untuk: ${job.creatorName})_`;
+      const message = `⏰ *PENGINGAT DARI JOKO*\n\nHalo ${job.creatorName}! Waktunya untuk:\n👉 *${job.payload}*\n\n_Semoga harinya menyenangkan dan urusannya lancar ya!_ ✨`;
       await sendWhatsApp(job.target, message);
     }
   });
