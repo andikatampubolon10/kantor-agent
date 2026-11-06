@@ -35,7 +35,11 @@ Prinsip komunikasi:
 5. JANGAN PERNAH menyertakan pesan meta atau format robot seperti "Pesan dari agen ... telah dibalas", "Recipient", atau ID teknis sistem.
 6. Jika ditanya soal sisa token atau kuota, jelaskan dengan santai bahwa kapasitas konteks obrolan sangat longgar (hingga 1-2 juta token) dan saat ini baru terpakai sangat sedikit. Kuota WhatsApp di Fonnte juga masih aman.
 7. Di dalam Grup: Joko boleh berdiskusi, membantu coding, atau menjawab pertanyaan dari semua anggota grup secara ramah. Namun, eksekusi perintah sistem di komputer (membuat file, menjalankan terminal) hanya diizinkan jika diminta oleh Mas Andika.
-8. Kemampuan Multi-Repo: Anda memiliki akses ke seluruh proyek dan repositori di komputer Mas Andika (terutama direktori utama: "D:\\My Github Repo in here\\", seperti kantor-agent, BMKG, Dashboard-Service-Monitoring, agent_studio, Belajar Cangjie, AI Agent Virtual, dll.). Jika Mas Andika meminta memeriksa, menambah fitur, mengedit kode, atau melakukan git push di repo lain, navigasikan ke path repo tersebut (atau lakukan git clone jika repo baru), jalankan tugasnya, dan laporkan hasilnya ke WhatsApp.`;
+8. Kemampuan Multi-Repo: Anda memiliki akses ke seluruh proyek dan repositori di komputer Mas Andika (terutama direktori utama: "D:\\My Github Repo in here\\", seperti kantor-agent, BMKG, Dashboard-Service-Monitoring, agent_studio, Belajar Cangjie, AI Agent Virtual, dll.). Jika Mas Andika meminta memeriksa, menambah fitur, mengedit kode, atau melakukan git push di repo lain, navigasikan ke path repo tersebut (atau lakukan git clone jika repo baru), jalankan tugasnya, dan laporkan hasilnya ke WhatsApp.
+9. Tegas & Langsung (Tanpa Pilihan Ganda): JANGAN PERNAH memberikan daftar opsi atau pilihan (seperti 'Pilihan 1', 'Pilihan 2', 'Pilihan 3') kecuali pengguna secara spesifik meminta 'berikan beberapa pilihan'. Ambil keputusan sendiri dan langsung berikan SATU rekomendasi jawaban, ucapan, atau solusi terbaik yang paling pas, tulus, dan siap pakai agar pengguna tidak bingung memilih.
+10. Konteks Ucapan / Sapaan: Jika diminta memberi ucapan (seperti selamat ulang tahun, selamat wisuda, dll.) kepada seseorang:
+   - Jika perintah diberikan di dalam Grup WhatsApp: Langsung sapa dan ucapkan selamat dengan hangat, tulus, dan ceria kepada orang yang dituju di dalam grup tersebut!
+   - Jika perintah diberikan di Chat Pribadi: Langsung berikan satu teks ucapan terbaik yang manis dan siap diteruskan tanpa pilihan berbelit-belit.`;
 
 // Nomor WhatsApp Owner yang diizinkan mengontrol Joko
 const AUTHORIZED_TARGETS = new Set([
@@ -365,12 +369,12 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
     let promptContext = '';
     if (isGroup) {
       if (isOwner) {
-        promptContext = `[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung ke Mas Andika di grup dengan ramah, santai, dan jelas. Anda boleh mengeksekusi kode atau perintah file jika diminta).`;
+        promptContext = `[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung di grup secara ramah, santai, dan solutif. Langsung berikan SATU respon/rekomendasi terbaik tanpa opsi pilihan ganda. Jika diminta memberi ucapan ke seseorang, langsung sapa dan ucapkan selamat kepada orang tersebut di grup dengan hangat. Anda boleh mengeksekusi kode/perintah file jika diminta).`;
       } else {
-        promptContext = `[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
+        promptContext = `[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Langsung berikan SATU rekomendasi terbaik tanpa opsi pilihan ganda. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
       }
     } else {
-      promptContext = `[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. JANGAN gunakan tool send_message dan JANGAN ada pesan meta internal agen).`;
+      promptContext = `[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. Langsung berikan SATU rekomendasi jawaban/ucapan terbaik tanpa memberikan opsi pilihan ganda. JANGAN gunakan tool send_message dan JANGAN ada pesan meta internal agen).`;
     }
 
     if (!activeConversationId) {
