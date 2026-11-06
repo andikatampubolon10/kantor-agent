@@ -13,6 +13,12 @@ import {
   startCronScheduler,
   getWIBDate
 } from './cron-manager.mjs';
+import {
+  startTJTracker,
+  getLiveTransitInfo,
+  isTransjakartaQuery,
+  extractTransitParams
+} from './tj-tracker.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -156,7 +162,8 @@ Prinsip komunikasi:
 }
 \`\`\`
 Format field yang didukung: "type" ("once"/"daily"/"weekly"), "delayMinutes" (angka menit dari sekarang), "delaySeconds" (angka detik), "time" ("HH:MM"), "isTomorrow" (true/false), "day" ("senin", dll.), dan "task" (keterangan tugas). Sistem kami akan mengekstrak blok tersebut secara otomatis ke cron-jobs.json.
-12. Pemahaman Konteks & Rangkuman Grup: Saat berada di dalam Grup WhatsApp, Anda dibekali riwayat percakapan terkini antar-anggota grup. Jika ada anggota yang bertanya seperti "lagi bahas apa di grup ini?", "rangkum obrolan grup", atau pertanyaan seputar obrolan sebelumnya di grup, gunakan riwayat percakapan tersebut untuk merangkum topik, dinamika obrolan, atau keputusan yang sedang dibicarakan secara ringkas, jelas, dan ramah.`;
+12. Pemahaman Konteks & Rangkuman Grup: Saat berada di dalam Grup WhatsApp, Anda dibekali riwayat percakapan terkini antar-anggota grup. Jika ada anggota yang bertanya seperti "lagi bahas apa di grup ini?", "rangkum obrolan grup", atau pertanyaan seputar obrolan sebelumnya di grup, gunakan riwayat percakapan tersebut untuk merangkum topik, dinamika obrolan, atau keputusan yang sedang dibicarakan secara ringkas, jelas, dan ramah.
+13. Live Radar Transjakarta: Anda memiliki akses ke radar GPS live seluruh armada Transjakarta (BRT, Feeder, Mikrotrans). Jika pengguna bertanya seputar posisi bus, estimasi waktu kedatangan (ETA), rute, atau halte Transjakarta, data live GPS resmi akan disediakan di konteks obrolan. Gunakan data tersebut untuk memberikan jawaban yang akurat, real-time, dan solutif layaknya warga lokal Jakarta yang ramah dan paham seluk-beluk transportasi umum.`;
 
 // Nomor WhatsApp Owner yang diizinkan mengontrol Joko
 const AUTHORIZED_TARGETS = new Set([
@@ -523,6 +530,29 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
   try {
     let startStepIndex = 0;
 
+    let tjContext = '';
+    if (isTransjakartaQuery(userPrompt)) {
+      console.log(`[TJ Tracker] 🚌 Terdeteksi pertanyaan Transjakarta dari ${senderName}: "${userPrompt}"`);
+      try {
+        const transitParams = extractTransitParams(userPrompt);
+        const liveTJ = await getLiveTransitInfo(transitParams);
+        if (liveTJ.success) {
+          tjContext = `\n[DATA LIVE GPS REAL-TIME TRANSJAKARTA RESMI]:
+• Koridor: ${liveTJ.corridor} (${liveTJ.routeName})
+• Halte Asal / Keberangkatan Pengguna: ${liveTJ.originStop}
+• Halte Tujuan Pengguna: ${liveTJ.destStop || 'Sesuai rute'}
+• Jumlah Armada Aktif di Koridor Saat Ini: ${liveTJ.activeBusCount} bus
+• Bus Terdekat & Estimasi Waktu Tiba (ETA):
+${liveTJ.buses.length > 0 ? liveTJ.buses.slice(0, 3).map((b, i) => `  ${i+1}. Armada ${b.bodyNo} (Papan Jurusan: "${b.headsign}") -> Posisi Terakhir: ${b.currStop || b.nextStop}, Kecepatan: ${b.speed} km/jam, Estimasi Tiba di Halte ${liveTJ.originStop}: ${b.etaOriginMinutes !== null ? b.etaOriginMinutes + ' menit lagi' : 'Sedang menuju halte'}, Estimasi Sampai di Halte ${liveTJ.destStop || 'Tujuan'}: ${b.etaDestMinutes !== null ? b.etaDestMinutes + ' menit lagi' : '-'}`).join('\n') : '  (Armada bus sedang memutar rute/terminus)'}
+• Tarif Tiket: Rp ${liveTJ.price}
+• Jam Operasional: ${liveTJ.operatingHours}
+(PENTING: Gunakan data live GPS nyata di atas untuk memberikan jawaban yang akurat, ramah, dan solutif sebagai Joko. Sebutkan nomor armada bus terdekat, posisinya saat ini, berapa menit lagi bus akan tiba di halte tempat pengguna berdiri, dan estimasi waktu sampai di halte tujuan. Arahkan pengguna dengan ramah untuk bersiap di peron yang tepat).\n\n`;
+        }
+      } catch (err) {
+        console.error('[TJ Tracker] Error query live transit:', err.message);
+      }
+    }
+
     let promptContext = '';
     if (isGroup) {
       const recentGroupHistory = getRecentGroupHistory(targetRecipient, 25);
@@ -531,12 +561,12 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
         : '';
 
       if (isOwner) {
-        promptContext = `${historyText}[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung di grup secara ramah, santai, dan solutif. Jika Mas Andika bertanya mengenai konteks atau rangkuman obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara akurat dan nyambung. Langsung berikan SATU respon/rekomendasi terbaik tanpa opsi pilihan ganda. Anda boleh mengeksekusi kode/perintah file jika diminta).`;
+        promptContext = `${historyText}${tjContext}[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung di grup secara ramah, santai, dan solutif. Jika Mas Andika bertanya mengenai konteks atau rangkuman obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara akurat dan nyambung. Langsung berikan SATU respon/rekomendasi terbaik tanpa opsi pilihan ganda. Anda boleh mengeksekusi kode/perintah file jika diminta).`;
       } else {
-        promptContext = `${historyText}[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Jika pengguna bertanya mengenai konteks atau obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara cerdas dan akurat. Langsung berikan SATU rekomendasi terbaik tanpa opsi pilihan ganda. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
+        promptContext = `${historyText}${tjContext}[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Jika pengguna bertanya mengenai konteks atau obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara cerdas dan akurat. Langsung berikan SATU rekomendasi terbaik tanpa opsi pilihan ganda. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
       }
     } else {
-      promptContext = `[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. Langsung berikan SATU rekomendasi jawaban/ucapan terbaik tanpa memberikan opsi pilihan ganda. JANGAN gunakan tool send_message dan JANGAN ada pesan meta internal agen).`;
+      promptContext = `${tjContext}[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. Langsung berikan SATU rekomendasi jawaban/ucapan terbaik tanpa memberikan opsi pilihan ganda. JANGAN gunakan tool send_message dan JANGAN ada pesan meta internal agen).`;
     }
 
     if (!activeConversationId) {
@@ -922,6 +952,7 @@ process.on('unhandledRejection', (reason) => {
 // Jalankan HTTP Server, Cron Engine, dan Cloudflare Tunnel
 server.listen(PORT, '0.0.0.0', async () => {
   loadGroupHistory();
+  startTJTracker();
   const curState = getJokoState();
   console.log(`====================================================`);
   console.log(`🚀 Asisten WhatsApp "JOKO" aktif di port ${PORT}`);
