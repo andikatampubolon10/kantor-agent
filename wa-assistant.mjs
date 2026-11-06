@@ -25,6 +25,52 @@ const BRAIN_DIR = 'C:\\Users\\andik\\.gemini\\antigravity\\brain';
 const CLOUDFLARED_PATH = path.join(process.cwd(), 'cloudflared.exe');
 const SESSION_FILE = path.join(process.cwd(), '.wa-assistant-session.json');
 const JOKO_STATE_FILE = path.join(process.cwd(), '.joko-state.json');
+const GROUP_HISTORY_FILE = path.join(process.cwd(), '.group-history.json');
+
+// Memori riwayat obrolan grup WhatsApp (Rolling Message History)
+let groupHistory = {};
+
+function loadGroupHistory() {
+  try {
+    if (fs.existsSync(GROUP_HISTORY_FILE)) {
+      groupHistory = JSON.parse(fs.readFileSync(GROUP_HISTORY_FILE, 'utf8'));
+    }
+  } catch (err) {
+    console.error('[Group History] Error reading:', err.message);
+  }
+}
+
+function saveGroupHistory() {
+  try {
+    fs.writeFileSync(GROUP_HISTORY_FILE, JSON.stringify(groupHistory, null, 2));
+  } catch (err) {}
+}
+
+function recordGroupMessage(groupId, senderName, senderNumber, message) {
+  if (!groupId || !message) return;
+  if (!groupHistory[groupId]) groupHistory[groupId] = [];
+
+  // Hindari mencatat pesan bot Joko sendiri ke dalam riwayat
+  if (isOurOwnMessage(message)) return;
+
+  groupHistory[groupId].push({
+    senderName: senderName || 'Anggota',
+    senderNumber,
+    message: message.trim(),
+    time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+  });
+
+  // Batasi maksimal 40 percakapan terakhir per grup agar memori efisien dan cepat
+  if (groupHistory[groupId].length > 40) {
+    groupHistory[groupId] = groupHistory[groupId].slice(-40);
+  }
+  saveGroupHistory();
+}
+
+function getRecentGroupHistory(groupId, limit = 20) {
+  if (!groupHistory[groupId]) return [];
+  return groupHistory[groupId].slice(-limit);
+}
 
 // Persona sistem untuk Joko: Asisten Pribadi Mas Andika
 const SYSTEM_PERSONA = `Peran Anda: Anda adalah Joko, asisten pribadi cerdas, ramah, dan solutif untuk Mas Andika (Owner sistem Anda: nomor 6282163850914).
@@ -49,7 +95,8 @@ Prinsip komunikasi:
   "task": "isi pengingat"
 }
 \`\`\`
-Format field yang didukung: "type" ("once"/"daily"/"weekly"), "delayMinutes" (angka menit dari sekarang), "delaySeconds" (angka detik), "time" ("HH:MM"), "isTomorrow" (true/false), "day" ("senin", dll.), dan "task" (keterangan tugas). Sistem kami akan mengekstrak blok tersebut secara otomatis ke cron-jobs.json.`;
+Format field yang didukung: "type" ("once"/"daily"/"weekly"), "delayMinutes" (angka menit dari sekarang), "delaySeconds" (angka detik), "time" ("HH:MM"), "isTomorrow" (true/false), "day" ("senin", dll.), dan "task" (keterangan tugas). Sistem kami akan mengekstrak blok tersebut secara otomatis ke cron-jobs.json.
+12. Pemahaman Konteks & Rangkuman Grup: Saat berada di dalam Grup WhatsApp, Anda dibekali riwayat percakapan terkini antar-anggota grup. Jika ada anggota yang bertanya seperti "lagi bahas apa di grup ini?", "rangkum obrolan grup", atau pertanyaan seputar obrolan sebelumnya di grup, gunakan riwayat percakapan tersebut untuk merangkum topik, dinamika obrolan, atau keputusan yang sedang dibicarakan secara ringkas, jelas, dan ramah.`;
 
 // Nomor WhatsApp Owner yang diizinkan mengontrol Joko
 const AUTHORIZED_TARGETS = new Set([
@@ -418,10 +465,15 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, i
 
     let promptContext = '';
     if (isGroup) {
+      const recentGroupHistory = getRecentGroupHistory(targetRecipient, 25);
+      const historyText = recentGroupHistory.length > 0
+        ? `\n[Riwayat Percakapan Terakhir di Grup WhatsApp ini]:\n${recentGroupHistory.map(m => `• [${m.time}] ${m.senderName}: "${m.message}"`).join('\n')}\n\n`
+        : '';
+
       if (isOwner) {
-        promptContext = `[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung di grup secara ramah, santai, dan solutif. Langsung berikan SATU respon/rekomendasi terbaik tanpa opsi pilihan ganda. Jika diminta memberi ucapan ke seseorang, langsung sapa dan ucapkan selamat kepada orang tersebut di grup dengan hangat. Anda boleh mengeksekusi kode/perintah file jika diminta).`;
+        promptContext = `${historyText}[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung di grup secara ramah, santai, dan solutif. Jika Mas Andika bertanya mengenai konteks atau rangkuman obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara akurat dan nyambung. Langsung berikan SATU respon/rekomendasi terbaik tanpa opsi pilihan ganda. Anda boleh mengeksekusi kode/perintah file jika diminta).`;
       } else {
-        promptContext = `[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Langsung berikan SATU rekomendasi terbaik tanpa opsi pilihan ganda. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
+        promptContext = `${historyText}[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Jika pengguna bertanya mengenai konteks atau obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara cerdas dan akurat. Langsung berikan SATU rekomendasi terbaik tanpa opsi pilihan ganda. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
       }
     } else {
       promptContext = `[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. Langsung berikan SATU rekomendasi jawaban/ucapan terbaik tanpa memberikan opsi pilihan ganda. JANGAN gunakan tool send_message dan JANGAN ada pesan meta internal agen).`;
@@ -593,6 +645,9 @@ const server = http.createServer((req, res) => {
         let userPrompt = rawMessage;
 
         if (isGroup) {
+          // Rekam setiap pesan di grup ke memori riwayat obrolan di latar belakang
+          recordGroupMessage(rawSender, senderName, senderNumber, rawMessage);
+
           // Di grup, respon jika dipanggil namanya ("Joko", "!joko", "!bot", "!ai", "@bot")
           const triggerMatch = rawMessage.match(/^(!joko|joko|!bot|!ai|@bot)\b\s*[:,-]?\s*(.*)/i);
           if (!triggerMatch) {
@@ -769,6 +824,7 @@ process.on('unhandledRejection', (reason) => {
 
 // Jalankan HTTP Server, Cron Engine, dan Cloudflare Tunnel
 server.listen(PORT, '0.0.0.0', async () => {
+  loadGroupHistory();
   const curState = getJokoState();
   console.log(`====================================================`);
   console.log(`🚀 Asisten WhatsApp "JOKO" aktif di port ${PORT}`);
