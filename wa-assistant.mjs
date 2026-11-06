@@ -724,6 +724,14 @@ Joko akan otomatis mengirimkan pesan pengingat saat waktunya tiba ya! ⏳`);
   res.end('Not Found');
 });
 
+// Tangkap uncaught exceptions agar proses server tidak pernah crash
+process.on('uncaughtException', (err) => {
+  console.error('[Process Error] Uncaught exception:', err?.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process Error] Unhandled rejection:', reason?.message || reason);
+});
+
 // Jalankan HTTP Server, Cron Engine, dan Cloudflare Tunnel
 server.listen(PORT, '0.0.0.0', async () => {
   const curState = getJokoState();
@@ -757,39 +765,49 @@ server.listen(PORT, '0.0.0.0', async () => {
     }
   });
 
-  // Mulai Cloudflare Tunnel
-  if (fs.existsSync(CLOUDFLARED_PATH)) {
-    console.log('[Tunnel] Memulai Cloudflare Tunnel...');
-    const tunnel = spawn(CLOUDFLARED_PATH, ['tunnel', '--url', `http://127.0.0.1:${PORT}`]);
+  // Mulai Cloudflare Tunnel dengan fitur Auto-Reconnect
+  let activeTunnel = null;
+  let isShuttingDown = false;
 
+  function startTunnel() {
+    if (isShuttingDown || !fs.existsSync(CLOUDFLARED_PATH)) {
+      if (!fs.existsSync(CLOUDFLARED_PATH)) {
+        console.warn(`[Tunnel] ⚠️ cloudflared.exe tidak ditemukan di ${CLOUDFLARED_PATH}.`);
+      }
+      return;
+    }
+
+    console.log('[Tunnel] Memulai Cloudflare Tunnel...');
+    activeTunnel = spawn(CLOUDFLARED_PATH, ['tunnel', '--url', `http://127.0.0.1:${PORT}`]);
     let tunnelRegistered = false;
 
-    tunnel.stderr.on('data', async data => {
+    activeTunnel.stderr.on('data', async data => {
       const text = data.toString();
       const match = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
       if (match && !tunnelRegistered) {
         tunnelRegistered = true;
         const tunnelUrl = match[0];
         console.log(`\n🎉 TUNNEL URL BERHASIL DIBUAT: ${tunnelUrl}\n`);
-
         await updateFonnteWebhook(tunnelUrl);
       }
     });
 
-    tunnel.on('close', code => {
-      console.log(`[Tunnel] Cloudflare tunnel berhenti dengan kode ${code}`);
+    activeTunnel.on('close', code => {
+      console.log(`[Tunnel] Cloudflare tunnel berhenti dengan kode ${code}.`);
+      if (!isShuttingDown) {
+        console.log('[Tunnel] Memulai ulang tunnel dalam 3 detik...');
+        setTimeout(startTunnel, 3000);
+      }
     });
-
-    const cleanup = () => {
-      try { tunnel.kill(); } catch {}
-      process.exit();
-    };
-
-    process.on('SIGINT', cleanup);
-    process.on('SIGTERM', cleanup);
-    process.on('exit', cleanup);
-
-  } else {
-    console.warn(`[Tunnel] ⚠️ cloudflared.exe tidak ditemukan di ${CLOUDFLARED_PATH}.`);
   }
+
+  startTunnel();
+
+  const cleanup = () => {
+    isShuttingDown = true;
+    try { if (activeTunnel) activeTunnel.kill(); } catch {}
+  };
+
+  process.on('SIGINT', () => { cleanup(); process.exit(); });
+  process.on('SIGTERM', () => { cleanup(); process.exit(); });
 });
