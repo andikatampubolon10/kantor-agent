@@ -153,7 +153,10 @@ Prinsip komunikasi:
 10. Konteks Ucapan / Sapaan: Jika diminta memberi ucapan (seperti selamat ulang tahun, selamat wisuda, dll.) kepada seseorang:
    - Jika perintah diberikan di dalam Grup WhatsApp: Langsung sapa dan ucapkan selamat dengan hangat, tulus, dan ceria kepada orang yang dituju di dalam grup tersebut!
    - Jika perintah diberikan di Chat Pribadi: Langsung berikan satu teks ucapan terbaik yang manis dan siap diteruskan tanpa pilihan berbelit-belit.
-11. Pengingat & Jadwal Otomatis: Jika pengguna meminta Anda memasang pengingat, timer, alarm, atau jadwal (misal: "ingetin 5 menit lagi", "besok jam 8 pagi ingatkan...", dll.), selain memberikan konfirmasi ramah dalam obrolan, Anda WAJIB menyertakan blok JSON penjadwalan di baris paling akhir respons Anda:
+11. Pengingat & Jadwal Otomatis:
+   - PENTING: JANGAN PERNAH menggunakan tool internal "schedule" atau timer sistem internal lainnya!
+   - Sistem penjadwalan WhatsApp kami dikelola secara terpusat oleh server Node.js.
+   - Jika pengguna meminta Anda memasang pengingat, timer, alarm, atau jadwal (misal: "ingetin 5 menit lagi", "besok jam 8 pagi ingatkan...", dll.), selain memberikan konfirmasi ramah dalam obrolan, Anda WAJIB menyertakan blok JSON penjadwalan di baris paling akhir respons Anda:
 \`\`\`schedule
 {
   "type": "once",
@@ -266,7 +269,12 @@ function formatScheduleConfirmation(job, isOwner, senderName) {
     emoji = '🕌⏳';
   }
 
+  const isGroupTarget = job.target && job.target.includes('@g.us');
+
   if (job.type === 'once') {
+    if (isGroupTarget) {
+      return `Beres dong, ${name}! Pengingat ${time} udah Joko pasang buat seluruh penghuni grup ya. Nanti pas waktunya langsung Joko ${verb} ${emoji}`;
+    }
     return `Siap, ${name}! Pengingat ${time} udah Joko pasang ya. Nanti pas waktunya langsung Joko ${verb} ${emoji}`;
   } else if (job.type === 'daily') {
     return `Siap, ${name}! Jadwal harian ${job.config.readableTime} udah Joko pasang ya. Nanti setiap hari langsung Joko jalankan! ⏰✨`;
@@ -517,14 +525,17 @@ async function executeCronWithAntigravity(taskPrompt) {
 
 // Eksekusi prompt percakapan dengan Antigravity CLI
 let isProcessing = false;
+let lastSeenStepIndex = 0;
+let lastTargetRecipient = null;
 
-async function executeWithAntigravity(userPrompt, targetRecipient, senderName, isGroup, isOwner) {
+async function executeWithAntigravity(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner) {
   if (isProcessing) {
     console.log('[Agent] Joko sedang memproses tugas lain, permintaan diantrekan...');
     return;
   }
 
   isProcessing = true;
+  lastTargetRecipient = targetRecipient;
   let activeConversationId = getSavedSession();
 
   try {
@@ -561,12 +572,12 @@ ${liveTJ.buses.length > 0 ? liveTJ.buses.slice(0, 3).map((b, i) => `  ${i+1}. Ar
         : '';
 
       if (isOwner) {
-        promptContext = `${historyText}${tjContext}[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung di grup secara ramah, santai, dan solutif. Jika Mas Andika bertanya mengenai konteks atau rangkuman obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara akurat dan nyambung. Langsung berikan SATU respon/rekomendasi terbaik tanpa opsi pilihan ganda. Anda boleh mengeksekusi kode/perintah file jika diminta).`;
+        promptContext = `${historyText}${tjContext}[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung di grup secara ramah, santai, dan solutif. Jika Mas Andika bertanya mengenai konteks atau rangkuman obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara akurat dan nyambung. Langsung berikan SATU respon/rekomendasi terbaik tanpa opsi pilihan ganda. JANGAN PERNAH gunakan tool schedule atau send_message).`;
       } else {
-        promptContext = `${historyText}${tjContext}[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Jika pengguna bertanya mengenai konteks atau obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara cerdas dan akurat. Langsung berikan SATU rekomendasi terbaik tanpa opsi pilihan ganda. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini).`;
+        promptContext = `${historyText}${tjContext}[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Jika pengguna bertanya mengenai konteks atau obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara cerdas dan akurat. Langsung berikan SATU rekomendasi terbaik tanpa opsi pilihan ganda. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini. JANGAN PERNAH gunakan tool schedule atau send_message).`;
       }
     } else {
-      promptContext = `${tjContext}[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. Langsung berikan SATU rekomendasi jawaban/ucapan terbaik tanpa memberikan opsi pilihan ganda. JANGAN gunakan tool send_message dan JANGAN ada pesan meta internal agen).`;
+      promptContext = `${tjContext}[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. Langsung berikan SATU rekomendasi jawaban/ucapan terbaik tanpa memberikan opsi pilihan ganda. JANGAN gunakan tool send_message, JANGAN gunakan tool schedule, dan JANGAN ada pesan meta internal agen).`;
     }
 
     if (!activeConversationId) {
@@ -602,6 +613,11 @@ ${liveTJ.buses.length > 0 ? liveTJ.buses.slice(0, 3).map((b, i) => `  ${i+1}. Ar
 
     let responseText = await waitForAgentResponse(activeConversationId, startStepIndex);
     console.log(`[Agent] ✅ Respon Joko diterima (${responseText.length} karakter).`);
+
+    const finalSteps = readTranscript(activeConversationId);
+    if (finalSteps.length > 0) {
+      lastSeenStepIndex = finalSteps[finalSteps.length - 1].step_index;
+    }
 
     // Deteksi jika AI menyertakan blok schedule otomatis
     const scheduleBlockMatch = responseText.match(/```schedule\s*([\s\S]*?)\s*```/i);
@@ -926,7 +942,7 @@ const server = http.createServer((req, res) => {
         }
 
         // Jalankan percakapan / tugas dengan Joko via Antigravity
-        executeWithAntigravity(userPrompt, targetRecipient, senderName, isGroup, isOwner).catch(err => {
+        executeWithAntigravity(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner).catch(err => {
           console.error('[Async Error]', err);
         });
 
@@ -981,15 +997,83 @@ server.listen(PORT, '0.0.0.0', async () => {
     } else {
       const lower = job.payload.toLowerCase();
       const displayName = AUTHORIZED_TARGETS.has(job.creator) ? 'Mas Andika' : job.creatorName;
+      const isGroupTarget = job.target && job.target.includes('@g.us');
       let text = '';
-      if (/minum/i.test(lower)) {
-        text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Udah waktunya buat minum air putih nih biar tetap segar dan terhidrasi! 💧✨`;
+
+      if (/makan|lunch|sarapan|dinner/i.test(lower)) {
+        if (isGroupTarget) {
+          text = `Teng teng teng! 🔔 Jam makan nih!\n\nHalo teman-teman semua dan ${displayName}! Waktunya istirahat dan makan siang dulu ya. Yuk jeda pekerjaannya sejenak dan isi energi biar tetap semangat! 🍛🍲😋`;
+        } else {
+          text = `Teng teng teng! 🔔 Jam makan nih, ${displayName}!\n\nYuk istirahat sejenak dan makan siang dulu biar energinya terisi lagi dan nggak masuk angin. Selamat makan! 🍛🍲😋`;
+        }
+      } else if (/minum/i.test(lower)) {
+        if (isGroupTarget) {
+          text = `⏰ *Colekan dari Joko!*\n\nHalo semuanya! Udah waktunya minum air putih nih biar badan tetap segar dan fokus kejaga! 💧🥛✨`;
+        } else {
+          text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Udah waktunya buat minum air putih nih biar tetap segar dan terhidrasi! 💧✨`;
+        }
+      } else if (/rapat|meeting|zoom|briefing/i.test(lower)) {
+        text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Pengingat untuk:\n👉 *${job.payload}*\n\nYuk siap-siap meeting-nya! 💼✨`;
       } else {
         text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Udah waktunya untuk:\n👉 *${job.payload}*\n\n_Semoga urusannya lancar ya!_ ✨`;
       }
+
       await sendWhatsApp(job.target, text);
     }
   });
+
+  // Background Transcript Safety Net
+  // Memantau jika ada pesan MODEL yang muncul di transcript di luar webhook aktif
+  function startTranscriptWatcher() {
+    const session = getSavedSession();
+    if (session) {
+      const steps = readTranscript(session);
+      if (steps.length > 0) {
+        lastSeenStepIndex = steps[steps.length - 1].step_index;
+      }
+    }
+
+    setInterval(async () => {
+      if (isProcessing) return;
+      const session = getSavedSession();
+      if (!session) return;
+
+      try {
+        const steps = readTranscript(session);
+        if (!steps || steps.length === 0) return;
+
+        const unseen = steps.filter(s => typeof s.step_index === 'number' && s.step_index > lastSeenStepIndex);
+        if (unseen.length === 0) return;
+
+        for (const step of unseen) {
+          if (typeof step.step_index === 'number' && step.step_index > lastSeenStepIndex) {
+            lastSeenStepIndex = step.step_index;
+          }
+
+          if (
+            step.source === 'MODEL' &&
+            step.type === 'PLANNER_RESPONSE' &&
+            step.status === 'DONE' &&
+            step.content &&
+            typeof step.content === 'string' &&
+            step.content.trim().length > 0 &&
+            (!step.tool_calls || step.tool_calls.length === 0)
+          ) {
+            const content = cleanHumanResponse(step.content);
+            if (content && !isOurOwnMessage(content)) {
+              const target = lastTargetRecipient || Array.from(AUTHORIZED_TARGETS)[0];
+              console.log(`[Transcript Watcher] 🔔 Menangkap pesan asinkron tak terduga (step ${step.step_index}), meneruskan ke ${target}...`);
+              await sendWhatsApp(target, content);
+            }
+          }
+        }
+      } catch (err) {
+        // Abaikan error pembacaan transcript
+      }
+    }, 5000);
+  }
+
+  startTranscriptWatcher();
 
   // Mulai Cloudflare Tunnel dengan fitur Auto-Reconnect
   let activeTunnel = null;

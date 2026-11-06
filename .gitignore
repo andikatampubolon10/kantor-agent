@@ -6,6 +6,9 @@ node_modules/
 cloudflared.exe
 .wa-assistant-session.json
 .joko-state.json
+.group-history.json
+.group-access.json
+.tj-cache/
 cron-jobs.json
 fonnte-qr.png
 .vscode/

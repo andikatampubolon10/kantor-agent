@@ -79,14 +79,20 @@ const HARI_MAP = {
 function normalizeScheduleText(text) {
   let t = text.trim();
   t = t.replace(/^(!joko|joko|!bot|!ai|@bot)\b\s*[:,-]?\s*/i, '');
-  t = t.replace(/^(?:tolong|coba|bisa|minta tolong|mohon|harap|please|plis)\s+/i, '');
+  // Bersihkan basa-basi obrolan santai di awal secara berulang
+  let prev;
+  do {
+    prev = t;
+    t = t.replace(/^(?:katanya\s+(?:lu|kamu)\s+pinter|(?:lu|kamu)\s+kan\s+pinter|eh\s+bro|bro|woi|halo|tes|coba\s+deh|bisa\s+nggak|bisa\s+gak|tolong|coba|bisa|minta\s+tolong|mohon|harap|please|plis|eh|dong|ya)\b\s*[,:-]?\s*/i, '');
+  } while (t !== prev);
   return t.trim();
 }
 
 function cleanTask(task) {
+  if (!task) return '';
   return task
-    .replace(/^(?:ya|dong|nih|deh|plis|please|untuk|buat|supaya|agar|to)\b\s*/i, '')
-    .replace(/\s+(?:ya|dong|nih|deh|plis|please)$/i, '')
+    .replace(/^(?:ya|dong|nih|deh|plis|please|untuk|buat|supaya|agar|to|kalo|kalau|jangan\s+lupa)\b\s*/i, '')
+    .replace(/\s+(?:ya|dong|nih|deh|plis|please|bro|joko)$/i, '')
     .trim();
 }
 
@@ -106,14 +112,11 @@ function parseHourModifier(hour, modifier) {
   return h;
 }
 
-const VERB_PATTERN = '(?:ing[ae]t(?:kan|in|i|en)?|remind|pasang(?:kan)?\\s+(?:alarm|timer|pengingat)|alarm(?:kan)?|timer(?:kan)?|kasih\\s+tau|kasih\\s+tahu|beri\\s+tahu|bilang(?:in|an)?|bangun(?:kan|in)?)';
-const TARGET_PATTERN = '(?:\\s+(?:ke|pada|buat|untuk|me)\\s+)?(?:\\s*(?:saya|aku|gue|gw|kami|kita|me))?';
-const UNIT_PATTERN = '(menit|mnt|jam|detik|dtk|minute|hour|second)s?';
-const TIME_PREFIX = '(?:dalam\\s+|in\\s+)?';
-const TIME_SUFFIX = '(?:\\s*(?:lagi|ke\\s*depan|dari\\s+sekarang))?(?:\\s*(?:ya|dong|plis|please))?';
-const CONNECTOR = '(?:untuk|buat|supaya|agar|kalo|kalau|to)?';
-const MODIFIER = '(?:\\s*(pagi|siang|sore|malam))?';
-const WIB_PATTERN = '(?:\\s*(?:wib|wita|wit))?';
+const VERB_REGEX = /\b(ing[ae]t(?:kan|in|i|en)?|remind(?:er)?|pasang(?:kan)?\s+(?:alarm|timer|pengingat)|set(?:el)?\s+(?:alarm|timer|pengingat)|alarm(?:kan)?|timer(?:kan)?|kasih\s+tau|kasih\s+tahu|beri\s+tahu|bilang(?:in|an)?|bangun(?:kan|in)?)\b/i;
+const TARGET_REGEX = /^(?:\s*(?:ke|pada|sama)\s+[a-zA-Z0-9_]+|\s*(?:buat|untuk)\s+(?:saya|aku|gue|gw|gua|kami|kita|anak[- ]*anak|semua|semuanya|member|grup|temen[- ]*temen|teman[- ]*teman|kalian)\b|\s*(?:saya|aku|gue|gw|gua|kami|kita|anak[- ]*anak|semua|semuanya|member|grup|temen[- ]*temen|teman[- ]*teman|kalian)\b)/i;
+const PARTICLE_REGEX = /^(?:\s*(?:dong|ya|nih|deh|sih|plis|please|lah|kan|ta|tuh|coba|tolong|nanti|bisa))\b/i;
+const REL_TIME_REGEX = /(?:(?:dalam|in)\s+)?(\d+)\s*(menit|mnt|jam|detik|dtk|minute|hour|second)s?(?:\s*(?:lagi|ke\s*depan|dari\s+sekarang))?/i;
+const ABS_TIME_REGEX = /(?:(?:di|pada|pas|nanti|tepat|sekitar|pukul|at)\s+)?(?:jam|pukul)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(pagi|siang|sore|malam)?(?:\s*(?:wib|wita|wit))?/i;
 
 // Parser Bahasa Alami WhatsApp untuk membuat Jadwal/Pengingat
 export function parseScheduleCommand(text, creatorNumber, creatorName, targetRecipient) {
@@ -121,148 +124,9 @@ export function parseScheduleCommand(text, creatorNumber, creatorName, targetRec
   const wibNow = getWIBDate();
   const nowMs = Date.now();
 
-  // 1. RELATIVE TIMER: X menit/jam/detik lagi
-  // Pola 1A: [Verb] [Target] [Time] [Task] -> "ingatin saya dalam 2 menit lagi untuk minum"
-  const p1A = new RegExp('^' + VERB_PATTERN + TARGET_PATTERN + '\\s+' + TIME_PREFIX + '(\\d+)\\s*' + UNIT_PATTERN + TIME_SUFFIX + '\\s+' + CONNECTOR + '\\s*(.+)$', 'i');
-  let relMatch = cleaned.match(p1A);
-  let amount = 0, unit = '', rawTask = '';
-
-  if (relMatch) {
-    amount = parseInt(relMatch[1], 10);
-    unit = relMatch[2].toLowerCase();
-    rawTask = relMatch[3];
-  } else {
-    // Pola 1B: [Time] [Verb] [Target] [Task] -> "dalam 2 menit lagi ingatkan saya untuk minum"
-    const p1B = new RegExp('^' + TIME_PREFIX + '(\\d+)\\s*' + UNIT_PATTERN + TIME_SUFFIX + '\\s+(?:(?:tolong|coba|bisa|please)\\s+)?' + VERB_PATTERN + TARGET_PATTERN + '\\s+' + CONNECTOR + '\\s*(.+)$', 'i');
-    relMatch = cleaned.match(p1B);
-    if (relMatch) {
-      amount = parseInt(relMatch[1], 10);
-      unit = relMatch[2].toLowerCase();
-      rawTask = relMatch[3];
-    } else {
-      // Pola 1C: [Verb] [Target] [Task] [Time] -> "ingatin minum air 2 menit lagi"
-      const p1C = new RegExp('^' + VERB_PATTERN + TARGET_PATTERN + '\\s+' + CONNECTOR + '\\s*(.+?)\\s+' + TIME_PREFIX + '(\\d+)\\s*' + UNIT_PATTERN + TIME_SUFFIX + '$', 'i');
-      relMatch = cleaned.match(p1C);
-      if (relMatch) {
-        amount = parseInt(relMatch[2], 10);
-        unit = relMatch[3].toLowerCase();
-        rawTask = relMatch[1];
-      }
-    }
-  }
-
-  if (relMatch && amount > 0) {
-    let delayMs = amount * 60 * 1000;
-    let standardUnit = 'menit';
-    if (unit.startsWith('jam') || unit.startsWith('hour')) {
-      delayMs = amount * 60 * 60 * 1000;
-      standardUnit = 'jam';
-    } else if (unit.startsWith('detik') || unit.startsWith('dtk') || unit.startsWith('second')) {
-      delayMs = amount * 1000;
-      standardUnit = 'detik';
-    }
-
-    const task = cleanTask(rawTask);
-    const isAI = /^ai:\s*/i.test(task);
-    const actualTask = task.replace(/^ai:\s*/i, '');
-
-    return {
-      title: `Pengingat (${amount} ${standardUnit}): ${actualTask.slice(0, 30)}`,
-      creator: creatorNumber,
-      creatorName,
-      target: targetRecipient,
-      type: 'once',
-      config: {
-        targetTimestamp: nowMs + delayMs,
-        readableTime: `${amount} ${standardUnit} lagi`
-      },
-      actionType: isAI ? 'ai_prompt' : 'text',
-      payload: actualTask
-    };
-  }
-
-  // 2. BESOK: "ingatkan besok jam HH[:.]MM [pagi/siang/sore/malam] untuk [pesan]"
-  const pBesok = new RegExp('^(?:(?:' + VERB_PATTERN + TARGET_PATTERN + '\\s+)?besok\\s+jam\\s+(\\d{1,2})(?:[:.](\\d{2}))?' + MODIFIER + WIB_PATTERN + '|besok\\s+jam\\s+(\\d{1,2})(?:[:.](\\d{2}))?' + MODIFIER + WIB_PATTERN + '\\s+(?:' + VERB_PATTERN + TARGET_PATTERN + '\\s+)?)\\s*' + CONNECTOR + '\\s*(.+)$', 'i');
-  const besokMatch = cleaned.match(pBesok);
-  if (besokMatch) {
-    const rawH = besokMatch[1] || besokMatch[4];
-    const rawM = besokMatch[2] || besokMatch[5] || '00';
-    const mod = besokMatch[3] || besokMatch[6];
-    const rawTask = besokMatch[7];
-    const h = parseHourModifier(rawH, mod);
-    const m = parseInt(rawM, 10);
-    const task = cleanTask(rawTask.replace(new RegExp('^(?:' + VERB_PATTERN + TARGET_PATTERN + '\\s*)+', 'i'), ''));
-
-    const targetWib = new Date(wibNow);
-    targetWib.setDate(targetWib.getDate() + 1);
-    targetWib.setHours(h, m, 0, 0);
-
-    const diffMs = targetWib.getTime() - wibNow.getTime();
-    const targetTimestamp = nowMs + diffMs;
-    const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-
-    const isAI = /^ai:\s*/i.test(task);
-    const actualTask = task.replace(/^ai:\s*/i, '');
-
-    return {
-      title: `Pengingat Besok ${timeStr}: ${actualTask.slice(0, 30)}`,
-      creator: creatorNumber,
-      creatorName,
-      target: targetRecipient,
-      type: 'once',
-      config: {
-        targetTimestamp,
-        readableTime: `Besok jam ${timeStr} WIB`
-      },
-      actionType: isAI ? 'ai_prompt' : 'text',
-      payload: actualTask
-    };
-  }
-
-  // 3. JAM SPESIFIK HARI INI / BESOK: "ingatkan jam HH[:.]MM [pagi/siang/sore/malam] untuk [pesan]"
-  const pJam = new RegExp('^(?:' + VERB_PATTERN + TARGET_PATTERN + '\\s+(?:nanti\\s+)?jam\\s+(\\d{1,2})(?:[:.](\\d{2}))?' + MODIFIER + WIB_PATTERN + '|(?:nanti\\s+)?jam\\s+(\\d{1,2})(?:[:.](\\d{2}))?' + MODIFIER + WIB_PATTERN + '\\s+(?:' + VERB_PATTERN + TARGET_PATTERN + '\\s+)?)\\s*' + CONNECTOR + '\\s*(.+)$', 'i');
-  const jamMatch = cleaned.match(pJam);
-  if (jamMatch) {
-    const rawH = jamMatch[1] || jamMatch[4];
-    const rawM = jamMatch[2] || jamMatch[5] || '00';
-    const mod = jamMatch[3] || jamMatch[6];
-    const rawTask = jamMatch[7];
-    const h = parseHourModifier(rawH, mod);
-    const m = parseInt(rawM, 10);
-    const task = cleanTask(rawTask.replace(new RegExp('^(?:' + VERB_PATTERN + TARGET_PATTERN + '\\s*)+', 'i'), ''));
-
-    const targetWib = new Date(wibNow);
-    targetWib.setHours(h, m, 0, 0);
-    let isNextDay = false;
-    if (targetWib.getTime() <= wibNow.getTime()) {
-      targetWib.setDate(targetWib.getDate() + 1);
-      isNextDay = true;
-    }
-
-    const diffMs = targetWib.getTime() - wibNow.getTime();
-    const targetTimestamp = nowMs + diffMs;
-    const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-
-    const isAI = /^ai:\s*/i.test(task);
-    const actualTask = task.replace(/^ai:\s*/i, '');
-
-    return {
-      title: `Pengingat ${isNextDay ? 'Besok ' : ''}Jam ${timeStr}: ${actualTask.slice(0, 30)}`,
-      creator: creatorNumber,
-      creatorName,
-      target: targetRecipient,
-      type: 'once',
-      config: {
-        targetTimestamp,
-        readableTime: `${isNextDay ? 'Besok ' : ''}Jam ${timeStr} WIB`
-      },
-      actionType: isAI ? 'ai_prompt' : 'text',
-      payload: actualTask
-    };
-  }
-
-  // 4. HARIAN: "(jadwalkan )?setiap hari jam HH[:.]MM ..."
-  const pDaily = new RegExp('^(?:jadwalkan\\s+)?setiap\\s+hari\\s+jam\\s+(\\d{1,2})(?:[:.](\\d{2}))?' + MODIFIER + WIB_PATTERN + '\\s*' + CONNECTOR + '\\s*(.+)$', 'i');
+  // 1. RECURRING: Daily, Weekly, Interval, Cron
+  // Daily
+  const pDaily = /(?:jadwalkan\s+)?(?:setiap|tiap)\s+hari\s+(?:jam|pukul)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(pagi|siang|sore|malam)?\s*(?:untuk|buat|to)?\s*(.+)/i;
   const dailyMatch = cleaned.match(pDaily);
   if (dailyMatch) {
     const rawH = dailyMatch[1];
@@ -273,7 +137,6 @@ export function parseScheduleCommand(text, creatorNumber, creatorName, targetRec
     const m = parseInt(rawM, 10);
     const task = cleanTask(rawTask);
     const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-
     const isAI = /^ai:\s*/i.test(task);
     const actualTask = task.replace(/^ai:\s*/i, '');
 
@@ -292,8 +155,8 @@ export function parseScheduleCommand(text, creatorNumber, creatorName, targetRec
     };
   }
 
-  // 5. MINGGUAN: "(jadwalkan )?setiap [senin/selasa/...] jam HH[:.]MM ..."
-  const pWeekly = new RegExp('^(?:jadwalkan\\s+)?setiap\\s+(senin|selasa|rabu|kamis|jumat|jum\'at|sabtu|minggu|ahad)\\s+jam\\s+(\\d{1,2})(?:[:.](\\d{2}))?' + MODIFIER + WIB_PATTERN + '\\s*' + CONNECTOR + '\\s*(.+)$', 'i');
+  // Weekly
+  const pWeekly = /(?:jadwalkan\s+)?(?:setiap|tiap)\s+(senin|selasa|rabu|kamis|jumat|jum'at|sabtu|minggu|ahad)\s+(?:jam|pukul)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(pagi|siang|sore|malam)?\s*(?:untuk|buat|to)?\s*(.+)/i;
   const weeklyMatch = cleaned.match(pWeekly);
   if (weeklyMatch) {
     const dayName = weeklyMatch[1].toLowerCase();
@@ -306,7 +169,6 @@ export function parseScheduleCommand(text, creatorNumber, creatorName, targetRec
     const m = parseInt(rawM, 10);
     const task = cleanTask(rawTask);
     const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-
     const isAI = /^ai:\s*/i.test(task);
     const actualTask = task.replace(/^ai:\s*/i, '');
 
@@ -327,15 +189,14 @@ export function parseScheduleCommand(text, creatorNumber, creatorName, targetRec
     };
   }
 
-  // 6. INTERVAL: "(jadwalkan )?setiap X menit/jam [pesan]"
-  const pInterval = new RegExp('^(?:jadwalkan\\s+)?setiap\\s+(\\d+)\\s*(menit|jam)\\s+' + CONNECTOR + '\\s*(.+)$', 'i');
+  // Interval
+  const pInterval = /(?:jadwalkan\s+)?(?:setiap|tiap)\s+(\d+)\s*(menit|jam)\s*(?:untuk|buat|to)?\s*(.+)/i;
   const intervalMatch = cleaned.match(pInterval);
   if (intervalMatch) {
     const amount = parseInt(intervalMatch[1], 10);
     const unit = intervalMatch[2].toLowerCase();
     const task = cleanTask(intervalMatch[3]);
     const intervalMinutes = unit === 'jam' ? amount * 60 : amount;
-
     const isAI = /^ai:\s*/i.test(task);
     const actualTask = task.replace(/^ai:\s*/i, '');
 
@@ -354,7 +215,7 @@ export function parseScheduleCommand(text, creatorNumber, creatorName, targetRec
     };
   }
 
-  // 7. CRON KUSTOM: "jadwalkan cron '0 8 * * *' [pesan]"
+  // Cron
   const cronMatch = cleaned.match(/^jadwalkan\s+cron\s+["']([^"']+)["']\s+(.+)/i);
   if (cronMatch) {
     const cronExpr = cronMatch[1].trim();
@@ -371,6 +232,116 @@ export function parseScheduleCommand(text, creatorNumber, creatorName, targetRec
       config: {
         cronExpr,
         readableTime: `Cron: "${cronExpr}"`
+      },
+      actionType: isAI ? 'ai_prompt' : 'text',
+      payload: actualTask
+    };
+  }
+
+  // 2. RELATIVE TIMER: X menit/jam/detik lagi
+  const relTimeMatch = cleaned.match(REL_TIME_REGEX);
+  const verbMatch = cleaned.match(VERB_REGEX);
+
+  if (relTimeMatch && (verbMatch || /(?:lagi|ke\s*depan|dari\s+sekarang)/i.test(cleaned))) {
+    const amount = parseInt(relTimeMatch[1], 10);
+    const unit = relTimeMatch[2].toLowerCase();
+
+    let delayMs = amount * 60 * 1000;
+    let standardUnit = 'menit';
+    if (unit.startsWith('jam') || unit.startsWith('hour')) {
+      delayMs = amount * 60 * 60 * 1000;
+      standardUnit = 'jam';
+    } else if (unit.startsWith('detik') || unit.startsWith('dtk') || unit.startsWith('second')) {
+      delayMs = amount * 1000;
+      standardUnit = 'detik';
+    }
+
+    let withoutTime = cleaned.replace(relTimeMatch[0], ' ');
+    let rawTask = '';
+    if (verbMatch) {
+      const vIdx = withoutTime.search(VERB_REGEX);
+      let afterVerb = withoutTime.slice(vIdx).replace(VERB_REGEX, '').trim();
+      afterVerb = afterVerb.replace(TARGET_REGEX, '').trim();
+      afterVerb = afterVerb.replace(PARTICLE_REGEX, '').trim();
+      rawTask = afterVerb;
+      if (!rawTask) {
+        rawTask = withoutTime.slice(0, vIdx).trim();
+      }
+    } else {
+      rawTask = withoutTime;
+    }
+
+    const task = cleanTask(rawTask);
+    const isAI = /^ai:\s*/i.test(task);
+    const actualTask = task.replace(/^ai:\s*/i, '') || 'Pengingat';
+
+    return {
+      title: `Pengingat (${amount} ${standardUnit}): ${actualTask.slice(0, 30)}`,
+      creator: creatorNumber,
+      creatorName,
+      target: targetRecipient,
+      type: 'once',
+      config: {
+        targetTimestamp: nowMs + delayMs,
+        readableTime: `${amount} ${standardUnit} lagi`
+      },
+      actionType: isAI ? 'ai_prompt' : 'text',
+      payload: actualTask
+    };
+  }
+
+  // 3. ABSOLUTE TIME (Jam / Pukul HH:MM)
+  const absTimeMatch = cleaned.match(ABS_TIME_REGEX);
+  if (absTimeMatch && (verbMatch || /^(?:di\s+)?(?:jam|pukul)\b/i.test(cleaned) || /alarm|timer|pengingat/i.test(cleaned))) {
+    const rawH = absTimeMatch[1];
+    const rawM = absTimeMatch[2] || '00';
+    const mod = absTimeMatch[3];
+    const h = parseHourModifier(rawH, mod);
+    const m = parseInt(rawM, 10);
+    const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    const isTomorrow = /\bbesok\b/i.test(cleaned);
+
+    let withoutTime = cleaned.replace(absTimeMatch[0], ' ');
+    withoutTime = withoutTime.replace(/\bbesok\b/gi, ' ');
+    let rawTask = '';
+
+    if (verbMatch) {
+      const vIdx = withoutTime.search(VERB_REGEX);
+      let afterVerb = withoutTime.slice(vIdx).replace(VERB_REGEX, '').trim();
+      afterVerb = afterVerb.replace(TARGET_REGEX, '').trim();
+      afterVerb = afterVerb.replace(PARTICLE_REGEX, '').trim();
+      rawTask = afterVerb;
+      if (!rawTask) {
+        rawTask = withoutTime.slice(0, vIdx).trim();
+      }
+    } else {
+      rawTask = withoutTime;
+    }
+
+    const task = cleanTask(rawTask);
+    const isAI = /^ai:\s*/i.test(task);
+    const actualTask = task.replace(/^ai:\s*/i, '') || 'Pengingat';
+
+    const targetWib = new Date(wibNow);
+    targetWib.setHours(h, m, 0, 0);
+    let isNextDay = false;
+    if (isTomorrow || targetWib.getTime() <= wibNow.getTime()) {
+      targetWib.setDate(targetWib.getDate() + 1);
+      isNextDay = true;
+    }
+
+    const diffMs = targetWib.getTime() - wibNow.getTime();
+    const targetTimestamp = nowMs + diffMs;
+
+    return {
+      title: `Pengingat ${isNextDay ? 'Besok ' : ''}Jam ${timeStr}: ${actualTask.slice(0, 30)}`,
+      creator: creatorNumber,
+      creatorName,
+      target: targetRecipient,
+      type: 'once',
+      config: {
+        targetTimestamp,
+        readableTime: `${isNextDay ? 'Besok ' : ''}Jam ${timeStr} WIB`
       },
       actionType: isAI ? 'ai_prompt' : 'text',
       payload: actualTask
