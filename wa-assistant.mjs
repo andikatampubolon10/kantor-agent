@@ -125,6 +125,46 @@ function formatForWhatsApp(text) {
     .trim();
 }
 
+// Format respon konfirmasi jadwal yang ramah, alami, dan manusiawi sebagai Joko
+function formatScheduleConfirmation(job, isOwner, senderName) {
+  const name = isOwner ? 'Mas Andika' : senderName;
+  const task = job.payload.trim();
+  const time = job.config.readableTime.replace(/\s+lagi$/i, '');
+  const lower = task.toLowerCase();
+
+  let verb = `ingatkan buat ${task}!`;
+  let emoji = '⏳';
+
+  if (/minum/i.test(lower)) {
+    verb = 'colek buat minum air putih biar tetap segar dan terhidrasi!';
+    emoji = '💧⏳';
+  } else if (/makan|sarapan|lunch|dinner/i.test(lower)) {
+    verb = 'ingatkan buat makan ya, jangan lupa isi energi!';
+    emoji = '🍽️⏳';
+  } else if (/rapat|meeting|zoom|google meet|briefing/i.test(lower)) {
+    verb = 'ingatkan biar siap-siap ikut meeting!';
+    emoji = '💼⏳';
+  } else if (/bangun|tidur|istirahat/i.test(lower)) {
+    verb = 'bangunin tepat waktu!';
+    emoji = '⏰';
+  } else if (/sholat|solat|ibadah/i.test(lower)) {
+    verb = 'ingatkan buat ibadah!';
+    emoji = '🕌⏳';
+  }
+
+  if (job.type === 'once') {
+    return `Siap, ${name}! Pengingat ${time} udah Joko pasang ya. Nanti pas waktunya langsung Joko ${verb} ${emoji}`;
+  } else if (job.type === 'daily') {
+    return `Siap, ${name}! Jadwal harian ${job.config.readableTime} udah Joko pasang ya. Nanti setiap hari langsung Joko jalankan! ⏰✨`;
+  } else if (job.type === 'weekly') {
+    return `Siap, ${name}! Jadwal mingguan (${job.config.readableTime}) udah aktif ya. Joko bakal ingatkan rutin setiap minggunya! 📅✨`;
+  } else if (job.type === 'interval') {
+    return `Siap, ${name}! Pengingat berkala ${job.config.readableTime} udah aktif ya. Joko bakal colek secara rutin! 🔄✨`;
+  }
+
+  return `Siap, ${name}! Pengingat ${time} udah Joko pasang ya. Nanti pas waktunya langsung Joko ingatkan! ⏳`;
+}
+
 // Deteksi apakah teks merupakan laporan meta internal agen
 function isAgentMetaMessage(text) {
   if (!text) return false;
@@ -698,13 +738,8 @@ const server = http.createServer((req, res) => {
           }
 
           const saved = addJob(newSchedule);
-          await sendWhatsApp(targetRecipient, `✅ *Jadwal Berhasil Didaftarkan oleh Joko!*
-• Judul: *${saved.title}*
-• Jadwal: ${saved.config.readableTime}
-• Target: ${isGroup ? 'Grup ini' : 'Chat Pribadi'}
-• ID: \`${saved.id}\`
-
-Joko akan otomatis mengirimkan pesan pengingat saat waktunya tiba ya! ⏳`);
+          const confirmationMsg = formatScheduleConfirmation(saved, isOwner, senderName);
+          await sendWhatsApp(targetRecipient, confirmationMsg);
           return;
         }
 
@@ -760,8 +795,15 @@ server.listen(PORT, '0.0.0.0', async () => {
         await sendWhatsApp(job.target, `⚠️ Terjadi kendala saat Joko menjalankan jadwal "${job.title}": ${err.message}`);
       }
     } else {
-      const message = `⏰ *PENGINGAT DARI JOKO*\n\nHalo ${job.creatorName}! Waktunya untuk:\n👉 *${job.payload}*\n\n_Semoga harinya menyenangkan dan urusannya lancar ya!_ ✨`;
-      await sendWhatsApp(job.target, message);
+      const lower = job.payload.toLowerCase();
+      const displayName = AUTHORIZED_TARGETS.has(job.creator) ? 'Mas Andika' : job.creatorName;
+      let text = '';
+      if (/minum/i.test(lower)) {
+        text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Udah waktunya buat minum air putih nih biar tetap segar dan terhidrasi! 💧✨`;
+      } else {
+        text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Udah waktunya untuk:\n👉 *${job.payload}*\n\n_Semoga urusannya lancar ya!_ ✨`;
+      }
+      await sendWhatsApp(job.target, text);
     }
   });
 
