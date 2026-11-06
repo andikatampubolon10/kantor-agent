@@ -72,6 +72,66 @@ function getRecentGroupHistory(groupId, limit = 20) {
   return groupHistory[groupId].slice(-limit);
 }
 
+// ==========================================
+// KONTROL AKSES ANGGOTA GRUP (DEFAULT: TERKUNCI)
+// ==========================================
+const GROUP_ACCESS_FILE = path.join(process.cwd(), '.group-access.json');
+
+function loadAllowedGroups() {
+  try {
+    if (fs.existsSync(GROUP_ACCESS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(GROUP_ACCESS_FILE, 'utf8'));
+      if (Array.isArray(data)) return new Set(data);
+    }
+  } catch (err) {
+    console.error('[Group Access] Error reading:', err.message);
+  }
+  return new Set();
+}
+
+function saveAllowedGroups(groupsSet) {
+  try {
+    fs.writeFileSync(GROUP_ACCESS_FILE, JSON.stringify(Array.from(groupsSet), null, 2));
+  } catch (err) {
+    console.error('[Group Access] Error writing:', err.message);
+  }
+}
+
+let allowedGroups = loadAllowedGroups();
+
+function isGroupMembersAllowed(groupId) {
+  return allowedGroups.has(groupId);
+}
+
+function grantGroupAccess(groupId) {
+  allowedGroups.add(groupId);
+  saveAllowedGroups(allowedGroups);
+}
+
+function revokeGroupAccess(groupId) {
+  allowedGroups.delete(groupId);
+  saveAllowedGroups(allowedGroups);
+}
+
+// Deteksi perintah pembagian akses grup oleh Owner
+function isGrantAccessCommand(text) {
+  const t = text.toLowerCase().trim();
+  return (
+    /(?:teman[- ]*teman|semua|anggota|member)\s+(?:di\s+grup\s+ini\s+)?(?:juga\s+)?(?:kasih|dikasih|diberi|beri|bisa)\s+akses/i.test(t) ||
+    /(?:kasih|buka|izinkan|bolehkan|beri|share|aktifkan)\s+(?:akses\s+)?(?:buat\s+|untuk\s+)?(?:teman|semua|anggota|member|grup)/i.test(t) ||
+    /(?:izinkan|bolehkan)\s+(?:teman|semua|anggota|member)/i.test(t) ||
+    /akses\s+(?:buat\s+|untuk\s+)?(?:teman|semua|anggota|member)\s+(?:dibuka|diaktifkan|aktif)/i.test(t)
+  );
+}
+
+function isRevokeAccessCommand(text) {
+  const t = text.toLowerCase().trim();
+  return (
+    /(?:kunci|cabut|tutup|batasi|matikan|hapus)\s+akses\s+(?:buat\s+|untuk\s+)?(?:teman|semua|anggota|member|grup)/i.test(t) ||
+    /(?:akses\s+)?(?:hanya|cuma)\s+(?:buat|untuk)\s+(?:saya|mas andika|owner)/i.test(t)
+  );
+}
+
 // Persona sistem untuk Joko: Asisten Pribadi Mas Andika
 const SYSTEM_PERSONA = `Peran Anda: Anda adalah Joko, asisten pribadi cerdas, ramah, dan solutif untuk Mas Andika (Owner sistem Anda: nomor 6282163850914).
 Prinsip komunikasi:
@@ -81,7 +141,7 @@ Prinsip komunikasi:
 4. JANGAN PERNAH menggunakan tool send_message. Langsung berikan jawaban dalam teks respon akhir Anda.
 5. JANGAN PERNAH menyertakan pesan meta atau format robot seperti "Pesan dari agen ... telah dibalas", "Recipient", atau ID teknis sistem.
 6. Jika ditanya soal sisa token atau kuota, jelaskan dengan santai bahwa kapasitas konteks obrolan sangat longgar (hingga 1-2 juta token) dan saat ini baru terpakai sangat sedikit. Kuota WhatsApp di Fonnte juga masih aman.
-7. Di dalam Grup: Joko boleh berdiskusi, membantu coding, atau menjawab pertanyaan dari semua anggota grup secara ramah. Namun, eksekusi perintah sistem di komputer (membuat file, menjalankan terminal) hanya diizinkan jika diminta oleh Mas Andika.
+7. Di dalam Grup: Secara default, Joko HANYA merespons Mas Andika. Anggota lain di grup hanya bisa menggunakan Joko jika Mas Andika telah membuka izin aksesnya di grup tersebut ("Joko, teman teman di grup ini juga kasih akses ya"). Jika izin akses sudah dibuka, Joko boleh berdiskusi, membantu coding, atau menjawab pertanyaan dari anggota grup secara ramah. Namun eksekusi kode/file sistem di komputer tetap hanya diizinkan jika diminta oleh Mas Andika.
 8. Kemampuan Multi-Repo: Anda memiliki akses ke seluruh proyek dan repositori di komputer Mas Andika (terutama direktori utama: "D:\\My Github Repo in here\\", seperti kantor-agent, BMKG, Dashboard-Service-Monitoring, agent_studio, Belajar Cangjie, AI Agent Virtual, dll.). Jika Mas Andika meminta memeriksa, menambah fitur, mengedit kode, atau melakukan git push di repo lain, navigasikan ke path repo tersebut (atau lakukan git clone jika repo baru), jalankan tugasnya, dan laporkan hasilnya ke WhatsApp.
 9. Tegas & Langsung (Tanpa Pilihan Ganda): JANGAN PERNAH memberikan daftar opsi atau pilihan (seperti 'Pilihan 1', 'Pilihan 2', 'Pilihan 3') kecuali pengguna secara spesifik meminta 'berikan beberapa pilihan'. Ambil keputusan sendiri dan langsung berikan SATU rekomendasi jawaban, ucapan, atau solusi terbaik yang paling pas, tulus, dan siap pakai agar pengguna tidak bingung memilih.
 10. Konteks Ucapan / Sapaan: Jika diminta memberi ucapan (seperti selamat ulang tahun, selamat wisuda, dll.) kepada seseorang:
@@ -656,11 +716,44 @@ const server = http.createServer((req, res) => {
 
           userPrompt = triggerMatch[2]?.trim() || '';
           if (!userPrompt) {
+            if (!isOwner && !isGroupMembersAllowed(rawSender)) {
+              return;
+            }
             await sendWhatsApp(targetRecipient, `Halo ${senderName}! Joko di sini. Mau tanya atau minta bantuan apa? Ketik: \`Joko <pertanyaan Anda>\``);
             return;
           }
 
           console.log(`[Group Webhook] Dari ${senderName} (${senderNumber}) di ${rawSender}: "${userPrompt}"`);
+
+          // ========================================================
+          // KONTROL AKSES ANGGOTA GRUP (HANYA OWNER / MAS ANDIKA)
+          // ========================================================
+          if (isGrantAccessCommand(userPrompt)) {
+            if (!isOwner) {
+              await sendWhatsApp(targetRecipient, `Maaf ${senderName}, hanya Mas Andika yang berwenang membuka akses Joko untuk grup ini.`);
+              return;
+            }
+            grantGroupAccess(rawSender);
+            await sendWhatsApp(targetRecipient, `Siap, Mas Andika! Akses Joko untuk teman-teman di grup ini sudah dibuka ya. Sekarang semua anggota di grup ini bisa memanggil dan mengobrol dengan Joko! 🎉`);
+            return;
+          }
+
+          if (isRevokeAccessCommand(userPrompt)) {
+            if (!isOwner) {
+              await sendWhatsApp(targetRecipient, `Maaf ${senderName}, hanya Mas Andika yang berwenang mengunci akses Joko untuk grup ini.`);
+              return;
+            }
+            revokeGroupAccess(rawSender);
+            await sendWhatsApp(targetRecipient, `Siap, Mas Andika! Akses untuk anggota di grup ini sudah dikunci kembali. Sekarang hanya Mas Andika yang dapat menggunakan Joko di sini. 🔒`);
+            return;
+          }
+
+          // Cek apakah anggota grup selain Mas Andika diizinkan menggunakan Joko
+          if (!isOwner && !isGroupMembersAllowed(rawSender)) {
+            console.log(`[Group Security] 🔒 Panggilan dari ${senderName} (${senderNumber}) ditolak karena akses grup belum dibuka oleh Owner.`);
+            await sendWhatsApp(targetRecipient, `Halo ${senderName}! Saat ini akses Joko di grup ini masih dikunci khusus untuk Mas Andika.\n\nMas Andika bisa membuka aksesnya dengan mengetik:\n*"Joko, teman teman di grup ini juga kasih akses ya"*`);
+            return;
+          }
 
         } else {
           // Di chat pribadi:
@@ -716,11 +809,15 @@ const server = http.createServer((req, res) => {
         if (lowerPrompt === '/status' || lowerPrompt === 'status') {
           const curId = getSavedSession() || 'Belum ada sesi aktif';
           const activeJobs = loadJobs().length;
-          await sendWhatsApp(targetRecipient, `🟢 *Status Asisten Joko:*
+          let statusText = `🟢 *Status Asisten Joko:*
 • Kondisi: Aktif & Siaga (Awake)
 • Status Eksekutor: ${isProcessing ? '⏳ Sedang memproses tugas' : '✅ Siap'}
 • Jadwal Aktif: ${activeJobs} jadwal berjalan
-• Mode: ${isGroup ? 'Grup WhatsApp' : 'Chat Pribadi'}`);
+• Mode: ${isGroup ? 'Grup WhatsApp' : 'Chat Pribadi'}`;
+          if (isGroup) {
+            statusText += `\n• Akses Anggota Grup: ${isGroupMembersAllowed(rawSender) ? '🟢 Terbuka untuk semua anggota' : '🔒 Khusus Mas Andika (Terkunci)'}`;
+          }
+          await sendWhatsApp(targetRecipient, statusText);
           return;
         }
 
