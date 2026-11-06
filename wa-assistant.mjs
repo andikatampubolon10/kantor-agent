@@ -677,7 +677,8 @@ const server = http.createServer((req, res) => {
         }
 
         const rawSender = String(payload.sender || payload.phone || '').trim();
-        const rawMember = String(payload.member || '').trim();
+        const rawMember = String(payload.member || payload.participant || '').trim();
+        const rawDevice = String(payload.device || DEVICE_NUMBER || '').replace(/[^0-9]/g, '');
         const rawMessage = (payload.message || payload.text || '').trim();
         const senderName = payload.name || 'Teman';
 
@@ -690,8 +691,31 @@ const server = http.createServer((req, res) => {
         const isGroup = rawSender.endsWith('@g.us') || rawSender.includes('@g.us');
         const targetRecipient = rawSender;
 
-        const senderNumber = (isGroup && rawMember ? rawMember : rawSender).replace(/[^0-9]/g, '');
-        const isOwner = AUTHORIZED_TARGETS.has(senderNumber);
+        let senderNumber = '';
+        if (isGroup) {
+          if (rawMember && !rawMember.includes('@g.us')) {
+            senderNumber = rawMember.replace(/[^0-9]/g, '');
+          } else {
+            // Di grup, jika rawMember kosong atau berisi ID grup itu sendiri,
+            // berarti pesan dikirim langsung dari nomor WhatsApp Mas Andika sendiri (Device Fonnte)
+            senderNumber = rawDevice || '6282163850914';
+          }
+        } else {
+          senderNumber = rawSender.replace(/[^0-9]/g, '');
+        }
+
+        // Penentuan Owner (Mas Andika):
+        // 1. Nomor telepon senderNumber ada di whitelist AUTHORIZED_TARGETS
+        // 2. ATAU pesan di grup tanpa rawMember (dikirim langsung dari akun WhatsApp Mas Andika)
+        // 3. ATAU nama pengirim mengandung 'Andika'
+        const isOwner = AUTHORIZED_TARGETS.has(senderNumber) ||
+                        (isGroup && (!rawMember || rawMember.includes('@g.us'))) ||
+                        /andika/i.test(senderName);
+
+        // Pastikan jika isOwner terverifikasi, nomor yang tercatat selalu nomor Mas Andika
+        if (isOwner && !AUTHORIZED_TARGETS.has(senderNumber)) {
+          senderNumber = '6282163850914';
+        }
 
         // ==========================================
         // 1. KONTROL TIDUR / BANGUN JOKO (OWNER ONLY)
