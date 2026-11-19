@@ -89,6 +89,7 @@ export async function getRouteDetail(routeId) {
 const liveBuses = new Map();
 let mqttClient = null;
 let isConnected = false;
+let hasLoggedConnected = false;
 
 // Mulai koneksi background MQTT ke TransJakarta
 export function startTJTracker() {
@@ -104,12 +105,17 @@ export function startTJTracker() {
 
   mqttClient.on('connect', () => {
     isConnected = true;
-    console.log('[TJ Tracker] ✅ Terhubung ke live GPS broker TransJakarta (wss://mqtt.tj.co.id:8084/mqtt)');
+    if (!hasLoggedConnected) {
+      console.log('[TJ Tracker] ✅ Terhubung ke live GPS broker TransJakarta (wss://mqtt.tj.co.id:8084/mqtt)');
+    }
     mqttClient.subscribe('/mobile_armada/#', { qos: 0 }, (err) => {
       if (err) {
-        console.error('[TJ Tracker] Subscribe error:', err.message);
+        if (!hasLoggedConnected) console.error('[TJ Tracker] Subscribe error:', err.message);
       } else {
-        console.log('[TJ Tracker] 📡 Berhasil subscribe ke seluruh armada live TransJakarta (/mobile_armada/#)');
+        if (!hasLoggedConnected) {
+          console.log('[TJ Tracker] 📡 Berhasil subscribe ke seluruh armada live TransJakarta (/mobile_armada/#)');
+          hasLoggedConnected = true;
+        }
       }
     });
   });

@@ -29,13 +29,6 @@ jobs:
         run: |
           cat LAPORAN_LOG_HARIAN.md >> $GITHUB_STEP_SUMMARY
 
-      - name: Kirim Notifikasi ke WhatsApp via Fonnte
-        env:
-          FONNTE_TOKEN: ${{ secrets.FONNTE_TOKEN }}
-          FONNTE_TARGET: ${{ secrets.FONNTE_TARGET }}
-        run: |
-          node send-wa.mjs
-
       - name: Simpan dan Commit Laporan Otomatis
         run: |
           git config --global user.name "github-actions[bot]"

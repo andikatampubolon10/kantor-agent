@@ -1,5 +1,12 @@
 {
+  "name": "kantor-agent",
+  "version": "1.0.0",
+  "type": "module",
   "dependencies": {
-    "mqtt": "^5.16.1"
+    "@whiskeysockets/baileys": "^6.7.9",
+    "mqtt": "^5.16.1",
+    "pino": "^9.6.0",
+    "puppeteer-core": "^25.16.0",
+    "qrcode-terminal": "^0.12.0"
   }
 }

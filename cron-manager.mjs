@@ -115,8 +115,8 @@ function parseHourModifier(hour, modifier) {
 const VERB_REGEX = /\b(ing[ae]t(?:kan|in|i|en)?|remind(?:er)?|pasang(?:kan)?\s+(?:alarm|timer|pengingat)|set(?:el)?\s+(?:alarm|timer|pengingat)|alarm(?:kan)?|timer(?:kan)?|kasih\s+tau|kasih\s+tahu|beri\s+tahu|bilang(?:in|an)?|bangun(?:kan|in)?)\b/i;
 const TARGET_REGEX = /^(?:\s*(?:ke|pada|sama)\s+[a-zA-Z0-9_]+|\s*(?:buat|untuk)\s+(?:saya|aku|gue|gw|gua|kami|kita|anak[- ]*anak|semua|semuanya|member|grup|temen[- ]*temen|teman[- ]*teman|kalian)\b|\s*(?:saya|aku|gue|gw|gua|kami|kita|anak[- ]*anak|semua|semuanya|member|grup|temen[- ]*temen|teman[- ]*teman|kalian)\b)/i;
 const PARTICLE_REGEX = /^(?:\s*(?:dong|ya|nih|deh|sih|plis|please|lah|kan|ta|tuh|coba|tolong|nanti|bisa))\b/i;
-const REL_TIME_REGEX = /(?:(?:dalam|in)\s+)?(\d+)\s*(menit|mnt|jam|detik|dtk|minute|hour|second)s?(?:\s*(?:lagi|ke\s*depan|dari\s+sekarang))?/i;
-const ABS_TIME_REGEX = /(?:(?:di|pada|pas|nanti|tepat|sekitar|pukul|at)\s+)?(?:jam|pukul)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(pagi|siang|sore|malam)?(?:\s*(?:wib|wita|wit))?/i;
+const REL_TIME_REGEX = /(?:\b(?:dalam|in)\s+)?(\d+)\s*(menit|mnt|jam|detik|dtk|minute|hour|second)s?(?:\s*(?:lagi|ke\s*depan|dari\s+sekarang))?/i;
+const ABS_TIME_REGEX = /(?:\b(?:di|pada|pas|nanti|tepat|sekitar|pukul|at)\s+)?\b(?:jam|pukul)\s*(\d{1,2})(?:[:.](\d{2}))?\s*(pagi|siang|sore|malam)?(?:\s*(?:wib|wita|wit))?/i;
 
 // Parser Bahasa Alami WhatsApp untuk membuat Jadwal/Pengingat
 export function parseScheduleCommand(text, creatorNumber, creatorName, targetRecipient) {

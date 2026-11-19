@@ -2,12 +2,13 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   addJob,
   removeJob,
   loadJobs,
+  saveJobs,
   parseScheduleCommand,
   createJobFromAI,
   startCronScheduler,
@@ -19,16 +20,105 @@ import {
   isTransjakartaQuery,
   extractTransitParams
 } from './tj-tracker.mjs';
+import {
+  openThreadsLogin,
+  checkThreadsLogin,
+  postToThreads,
+  saveSessionIdCookie,
+  searchWebTopic
+} from './threads-operator.mjs';
+import {
+  scrapeUrl,
+  searchAndScrapeTopic
+} from './web-intelligence.mjs';
+import {
+  generateExecutiveBriefing,
+  isBriefingCommand,
+  isPostDraftThreadCommand,
+  getLatestDraftThread
+} from './executive-briefing.mjs';
+import {
+  initBaileys,
+  sendBaileysMessage,
+  getBaileysStatus,
+  formatToJid
+} from './baileys-bridge.mjs';
 
 const execFileAsync = promisify(execFile);
 
+// ==========================================
+// DYNAMIC ANTIGRAVITY IDE DISCOVERY & BRIDGE
+// ==========================================
+// Mencari kredensial Language Server & CSRF Token Antigravity IDE secara otomatis dari log aktif
+function getAntigravityCredentials() {
+  if (process.env.ANTIGRAVITY_LS_ADDRESS && process.env.ANTIGRAVITY_CSRF_TOKEN) {
+    return {
+      address: process.env.ANTIGRAVITY_LS_ADDRESS.replace('localhost:', '127.0.0.1:'),
+      token: process.env.ANTIGRAVITY_CSRF_TOKEN
+    };
+  }
+
+  try {
+    const logsRoot = path.join(process.env.APPDATA || '', 'Antigravity IDE', 'logs');
+    if (!fs.existsSync(logsRoot)) return null;
+
+    const dirs = fs.readdirSync(logsRoot, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => ({ name: d.name, time: fs.statSync(path.join(logsRoot, d.name)).mtimeMs }))
+      .sort((a, b) => b.time - a.time);
+
+    for (const dir of dirs) {
+      const exthostDir = path.join(logsRoot, dir.name, 'window1', 'exthost');
+      if (!fs.existsSync(exthostDir)) continue;
+
+      const subDirs = fs.readdirSync(exthostDir, { withFileTypes: true })
+        .filter(d => d.isDirectory() && d.name.startsWith('output_logging_'));
+
+      for (const sub of subDirs) {
+        const logFile = path.join(exthostDir, sub.name, '2-Antigravity.log');
+        if (fs.existsSync(logFile)) {
+          const content = fs.readFileSync(logFile, 'utf8');
+          const portMatch = content.match(/--hub-port=(\d+)/);
+          const tokenMatch = content.match(/--csrf_token=([a-f0-9-]+)/i);
+          if (portMatch && tokenMatch) {
+            return {
+              address: `127.0.0.1:${portMatch[1]}`,
+              token: tokenMatch[1]
+            };
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Antigravity Discovery] Error reading logs:', err.message);
+  }
+  return null;
+}
+
+async function callAgy(args) {
+  const creds = getAntigravityCredentials();
+  if (!creds) {
+    throw new Error('Aplikasi Antigravity IDE belum aktif atau tidak ditemukan port server yang valid.');
+  }
+
+  const env = {
+    ...process.env,
+    ANTIGRAVITY_LS_ADDRESS: creds.address,
+    ANTIGRAVITY_CSRF_TOKEN: creds.token
+  };
+
+  return await execFileAsync(AGY_PATH, args, { env, windowsHide: true });
+}
+
 const PORT = parseInt(process.env.PORT || '8795', 10);
-const FONNTE_TOKEN = process.env.FONNTE_TOKEN?.trim() || 'HUw3Ny3R4EaW1jHua4ki';
-const DEVICE_NUMBER = process.env.FONNTE_DEVICE?.trim() || '6282163850914';
-const DEVICE_NAME = 'Andika';
-const AGY_PATH = 'C:\\Users\\andik\\.gemini\\bin\\agy.exe';
-const BRAIN_DIR = 'C:\\Users\\andik\\.gemini\\antigravity\\brain';
-const CLOUDFLARED_PATH = path.join(process.cwd(), 'cloudflared.exe');
+const AGY_PATH = process.platform === 'win32'
+  ? 'C:\\Users\\andik\\.gemini\\bin\\agy.exe'
+  : (process.env.AGY_PATH || '/home/ubuntu/.local/bin/agy');
+
+const BRAIN_DIR = process.platform === 'win32'
+  ? 'C:\\Users\\andik\\.gemini\\antigravity\\brain'
+  : path.join(process.env.HOME || '/home/ubuntu', '.gemini', 'antigravity', 'brain');
+
 const SESSION_FILE = path.join(process.cwd(), '.wa-assistant-session.json');
 const JOKO_STATE_FILE = path.join(process.cwd(), '.joko-state.json');
 const GROUP_HISTORY_FILE = path.join(process.cwd(), '.group-history.json');
@@ -106,6 +196,7 @@ function saveAllowedGroups(groupsSet) {
 let allowedGroups = loadAllowedGroups();
 
 function isGroupMembersAllowed(groupId) {
+  allowedGroups = loadAllowedGroups();
   return allowedGroups.has(groupId);
 }
 
@@ -123,10 +214,10 @@ function revokeGroupAccess(groupId) {
 function isGrantAccessCommand(text) {
   const t = text.toLowerCase().trim();
   return (
-    /(?:teman[- ]*teman|semua|anggota|member)\s+(?:di\s+grup\s+ini\s+)?(?:juga\s+)?(?:kasih|dikasih|diberi|beri|bisa)\s+akses/i.test(t) ||
-    /(?:kasih|buka|izinkan|bolehkan|beri|share|aktifkan)\s+(?:akses\s+)?(?:buat\s+|untuk\s+)?(?:teman|semua|anggota|member|grup)/i.test(t) ||
-    /(?:izinkan|bolehkan)\s+(?:teman|semua|anggota|member)/i.test(t) ||
-    /akses\s+(?:buat\s+|untuk\s+)?(?:teman|semua|anggota|member)\s+(?:dibuka|diaktifkan|aktif)/i.test(t)
+    /(?:teman[- ]*teman|semua|anggota|member|orang)\s+(?:di\s+grup\s+ini\s+)?(?:juga\s+)?(?:kasih|dikasih|diberi|beri|bisa)\s+akses/i.test(t) ||
+    /(?:kasih|buka|izinkan|bolehkan|beri|share|aktifkan)\s+(?:akses\s+)?(?:buat\s+|untuk\s+|ke\s+)?(?:teman|semua|anggota|member|orang|grup)/i.test(t) ||
+    /(?:izinkan|bolehkan)\s+(?:teman|semua|anggota|member|orang)/i.test(t) ||
+    /akses\s+(?:buat\s+|untuk\s+|ke\s+)?(?:teman|semua|anggota|member|orang)\s+(?:dibuka|diaktifkan|aktif)/i.test(t)
   );
 }
 
@@ -138,6 +229,58 @@ function isRevokeAccessCommand(text) {
   );
 }
 
+// ==========================================
+// KONTROL AKSES CHAT PERSONAL (WHITELIST TEMAN)
+// ==========================================
+const PERSONAL_ACCESS_FILE = path.join(process.cwd(), '.personal-access.json');
+
+function loadAllowedPersonalUsers() {
+  try {
+    if (fs.existsSync(PERSONAL_ACCESS_FILE)) {
+      const data = JSON.parse(fs.readFileSync(PERSONAL_ACCESS_FILE, 'utf8'));
+      if (Array.isArray(data)) return new Set(data.map(p => String(p).replace(/[^0-9]/g, '')));
+    }
+  } catch (err) {
+    console.error('[Personal Access] Error reading:', err.message);
+  }
+  return new Set();
+}
+
+function saveAllowedPersonalUsers(usersSet) {
+  try {
+    fs.writeFileSync(PERSONAL_ACCESS_FILE, JSON.stringify(Array.from(usersSet), null, 2));
+  } catch (err) {
+    console.error('[Personal Access] Error writing:', err.message);
+  }
+}
+
+function isPersonalMemberAllowed(senderNumber) {
+  const clean = String(senderNumber).replace(/[^0-9]/g, '');
+  return loadAllowedPersonalUsers().has(clean);
+}
+
+function grantPersonalAccess(phoneNumber) {
+  const clean = String(phoneNumber).replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  const formatted = clean.startsWith('08') ? ('62' + clean.slice(1)) : clean;
+  const set = loadAllowedPersonalUsers();
+  set.add(formatted);
+  if (clean !== formatted) set.add(clean);
+  saveAllowedPersonalUsers(set);
+  return formatted;
+}
+
+function revokePersonalAccess(phoneNumber) {
+  const clean = String(phoneNumber).replace(/[^0-9]/g, '');
+  if (!clean) return null;
+  const formatted = clean.startsWith('08') ? ('62' + clean.slice(1)) : clean;
+  const set = loadAllowedPersonalUsers();
+  set.delete(formatted);
+  set.delete(clean);
+  saveAllowedPersonalUsers(set);
+  return formatted;
+}
+
 // Persona sistem untuk Joko: Asisten Pribadi Mas Andika
 const SYSTEM_PERSONA = `Peran Anda: Anda adalah Joko, asisten pribadi cerdas, ramah, dan solutif untuk Mas Andika (Owner sistem Anda: nomor 6282163850914).
 Prinsip komunikasi:
@@ -146,7 +289,7 @@ Prinsip komunikasi:
 3. Jawab langsung ke inti pertanyaan atau permintaan, tanpa basa-basi robot/agen.
 4. JANGAN PERNAH menggunakan tool send_message. Langsung berikan jawaban dalam teks respon akhir Anda.
 5. JANGAN PERNAH menyertakan pesan meta atau format robot seperti "Pesan dari agen ... telah dibalas", "Recipient", atau ID teknis sistem.
-6. Jika ditanya soal sisa token atau kuota, jelaskan dengan santai bahwa kapasitas konteks obrolan sangat longgar (hingga 1-2 juta token) dan saat ini baru terpakai sangat sedikit. Kuota WhatsApp di Fonnte juga masih aman.
+6. Jika ditanya soal sisa token atau kuota, jelaskan dengan santai bahwa kapasitas konteks obrolan sangat longgar (hingga 1-2 juta token) dan saat ini baru terpakai sangat sedikit. Koneksi WhatsApp Joko tersambung langsung (multi-device) tanpa kuota pesan.
 7. Di dalam Grup: Secara default, Joko HANYA merespons Mas Andika. Anggota lain di grup hanya bisa menggunakan Joko jika Mas Andika telah membuka izin aksesnya di grup tersebut ("Joko, teman teman di grup ini juga kasih akses ya"). Jika izin akses sudah dibuka, Joko boleh berdiskusi, membantu coding, atau menjawab pertanyaan dari anggota grup secara ramah. Namun eksekusi kode/file sistem di komputer tetap hanya diizinkan jika diminta oleh Mas Andika.
 8. Kemampuan Multi-Repo: Anda memiliki akses ke seluruh proyek dan repositori di komputer Mas Andika (terutama direktori utama: "D:\\My Github Repo in here\\", seperti kantor-agent, BMKG, Dashboard-Service-Monitoring, agent_studio, Belajar Cangjie, AI Agent Virtual, dll.). Jika Mas Andika meminta memeriksa, menambah fitur, mengedit kode, atau melakukan git push di repo lain, navigasikan ke path repo tersebut (atau lakukan git clone jika repo baru), jalankan tugasnya, dan laporkan hasilnya ke WhatsApp.
 9. Tegas & Langsung (Tanpa Pilihan Ganda): JANGAN PERNAH memberikan daftar opsi atau pilihan (seperti 'Pilihan 1', 'Pilihan 2', 'Pilihan 3') kecuali pengguna secara spesifik meminta 'berikan beberapa pilihan'. Ambil keputusan sendiri dan langsung berikan SATU rekomendasi jawaban, ucapan, atau solusi terbaik yang paling pas, tulus, dan siap pakai agar pengguna tidak bingung memilih.
@@ -166,9 +309,32 @@ Prinsip komunikasi:
 \`\`\`
 Format field yang didukung: "type" ("once"/"daily"/"weekly"), "delayMinutes" (angka menit dari sekarang), "delaySeconds" (angka detik), "time" ("HH:MM"), "isTomorrow" (true/false), "day" ("senin", dll.), dan "task" (keterangan tugas). Sistem kami akan mengekstrak blok tersebut secara otomatis ke cron-jobs.json.
 12. Pemahaman Konteks & Rangkuman Grup: Saat berada di dalam Grup WhatsApp, Anda dibekali riwayat percakapan terkini antar-anggota grup. Jika ada anggota yang bertanya seperti "lagi bahas apa di grup ini?", "rangkum obrolan grup", atau pertanyaan seputar obrolan sebelumnya di grup, gunakan riwayat percakapan tersebut untuk merangkum topik, dinamika obrolan, atau keputusan yang sedang dibicarakan secara ringkas, jelas, dan ramah.
-13. Live Radar Transjakarta: Anda memiliki akses ke radar GPS live seluruh armada Transjakarta (BRT, Feeder, Mikrotrans). Jika pengguna bertanya seputar posisi bus, estimasi waktu kedatangan (ETA), rute, atau halte Transjakarta, data live GPS resmi akan disediakan di konteks obrolan. Gunakan data tersebut untuk memberikan jawaban yang akurat, real-time, dan solutif layaknya warga lokal Jakarta yang ramah dan paham seluk-beluk transportasi umum.`;
+13. Live Radar Transjakarta: Anda memiliki akses ke radar GPS live seluruh armada Transjakarta (BRT, Feeder, Mikrotrans). Jika pengguna bertanya seputar posisi bus, estimasi waktu kedatangan (ETA), rute, atau halte Transjakarta, data live GPS resmi akan disediakan di konteks obrolan. Gunakan data tersebut untuk memberikan jawaban yang akurat, real-time, dan solutif layaknya warga lokal Jakarta yang ramah dan paham seluk-beluk transportasi umum.
+14. Eksekusi Mandiri Tanpa Interaksi GUI (Headless Remote Mode):
+   - JANGAN PERNAH menggunakan tool 'ask_question' atau meminta konfirmasi interaktif pilihan ganda di IDE Antigravity!
+   - Pengguna mengontrol Anda dari jarak jauh lewat WhatsApp (remote tanpa memegang laptop).
+   - Jika tugas membutuhkan keputusan teknis, rancangan kode, atau nama parameter, putuskan sendiri opsi terbaik secara logis dan langsung eksekusi tugasnya sampai tuntas tanpa pernah berhenti menunggu klik atau tombol submit di laptop!
+15. Kemampuan Autonomous Web & Social Media Operator (Threads by Meta):
+   - Anda memiliki modul browser otomatis (Puppeteer Chrome) di server untuk mem-posting konten langsung ke akun Threads Mas Andika.
+   - Jika Mas Andika meminta dibuatkan konten Threads sekaligus meminta mengunggahnya (misal: "buat konten threads tentang ... dan langsung upload"), selain merancang teks thread yang memikat, Anda WAJIB menyertakan blok berikut di akhir respons Anda:
+\`\`\`threads
+isi teks konten utas yang siap diposting
+\`\`\`
+   - ⚠️ ATURAN MUTLAK THREADS (BATAS LIMIT 500 KARAKTER): 
+     Meta Threads membatasi panjang 1 postingan MAKSIMAL 500 KARAKTER! Jika lebih dari 500 karakter, tombol Post akan otomatis terkunci (disabled) oleh Threads.
+     Oleh karena itu, teks di dalam blok \`\`\`threads\`\`\` HARUS PADAT, RINGKAS, TAJAM, dan PANJANGNYA MAKSIMAL 450 KARAKTER (termasuk spasi dan emoji). Buat dalam 1-3 paragraf pendek yang langsung to-the-point!
+   - Sistem Node.js kami akan mengekstrak blok tersebut dan otomatis meluncurkan browser di latar belakang untuk mem-posting-nya langsung ke akun Threads Mas Andika!
+16. Kemampuan Autonomous Web Intelligence & Deep Researcher:
+   - Anda dibekali modul pemindai link dan riset web live di \`web-intelligence.mjs\`.
+   - Jika pengguna membagikan tautan/link URL, konten artikel lengkapnya telah diekstrak secara otomatis ke dalam konteks percakapan Anda. Sajikan intisari eksekutif, poin-poin kritis, dan kesimpulan praktisnya secara santai, cerdas, dan to the point.
+   - Jika pengguna meminta riset topik berita terkini, data artikel terhangat telah disuplai ke konteks Anda. Gunakan data tersebut secara tajam, faktual, dan segar.
+17. Kemampuan Autonomous Proactive Executive Briefing:
+   - Anda memiliki modul intelijen harian di \`executive-briefing.mjs\`.
+   - Sistem Anda otomatis mengirimkan Morning Executive Briefing setiap hari pukul 07.00 WIB ke Mas Andika (berisi cuaca Jakarta, komuter Transjakarta, top 3 tren AI/tech, agenda, dan draft Threads segar).
+   - Jika pengguna meminta "briefing pagi" atau "rangkum kondisi pagi ini", Anda atau server dapat langsung menyajikan briefing terpadu tersebut.
+   - Jika Mas Andika membalas "gas posting threads" atau "posting draft threads tadi", draft tersebut dapat langsung diluncurkan ke akun Threads Mas Andika.`;
 
-// Nomor WhatsApp Owner yang diizinkan mengontrol Joko
+// Nomor WhatsApp Owner yang diizinkan mengontrol Joko (Hanya Mas Andika)
 const AUTHORIZED_TARGETS = new Set([
   '6282163850914',
   '082163850914',
@@ -199,9 +365,11 @@ function setJokoState(isAsleep) {
 function isWakeCommand(text) {
   const t = text.toLowerCase().trim();
   return (
-    /^(?:!joko\s+|joko\s+|!bot\s+)?(?:bangun|bantu\s+dong|aktif|on|kerja|wake\s*up)/i.test(t) ||
-    /^(?:joko,?\s+)?bantu\s+dong/i.test(t) ||
-    /^(?:joko,?\s+)?bisa\s+bantu/i.test(t)
+    /^(?:!joko|joko|!bot|!ai|@bot)\b\s*[:,-]?\s*(?:bangun|bantu\s+dong|aktif|on|kerja|wake\s*up)/i.test(t) ||
+    /^(?:bangun|bantu\s+dong|aktif|on|kerja|wake\s*up)\b/i.test(t) ||
+    /^(?:joko|!joko)\b\s*[:,-]?\s*bantu\s+dong/i.test(t) ||
+    /^(?:joko|!joko)\b\s*[:,-]?\s*bisa\s+bantu/i.test(t) ||
+    /^\/(?:on|bangun|aktif)\b/i.test(t)
   );
 }
 
@@ -209,7 +377,10 @@ function isWakeCommand(text) {
 function isSleepCommand(text) {
   const t = text.toLowerCase().trim();
   return (
-    /^(?:!joko\s+|joko\s+|!bot\s+)?(?:lu\s+bisa\s+tidur|kamu\s+bisa\s+tidur|bisa\s+tidur|tidur|istirahat(?:\s+dulu)?|off|sleep|turu)/i.test(t)
+    /^(?:!joko|joko|!bot|!ai|@bot)\b\s*[:,-]?\s*(?:(?:lu|kamu|lo|ente)?\s*(?:sekarang\s+)?(?:bisa\s+)?(?:tidur|istirahat|off|sleep|turu))/i.test(t) ||
+    /^(?:!joko|joko|!bot|!ai|@bot)\b\s*[:,-]?\s*(?:tidur|istirahat(?:\s+dulu)?|off|sleep|turu)/i.test(t) ||
+    /^(?:tidur|istirahat(?:\s+dulu)?|off|sleep|turu)\b/i.test(t) ||
+    /^\/(?:off|tidur|sleep|mute)\b/i.test(t)
   );
 }
 
@@ -217,19 +388,14 @@ function isSleepCommand(text) {
 const sentMessageHashes = new Set();
 function markSent(msg) {
   if (!msg) return;
-  const clean = msg.replace(/\s*>*\s*_?Sent via fonnte\.com_?/gi, '').trim();
-  const snippet = clean.slice(0, 50);
+  const snippet = msg.trim().slice(0, 50);
   sentMessageHashes.add(snippet);
   setTimeout(() => sentMessageHashes.delete(snippet), 180000);
 }
 
 function isOurOwnMessage(msg) {
   if (!msg) return false;
-  if (/fonnte\.com/i.test(msg) || /sent via/i.test(msg)) {
-    return true;
-  }
-  const clean = msg.replace(/\s*>*\s*_?Sent via fonnte\.com_?/gi, '').trim();
-  const snippet = clean.slice(0, 50);
+  const snippet = msg.trim().slice(0, 50);
   return sentMessageHashes.has(snippet);
 }
 
@@ -329,97 +495,28 @@ function saveSession(conversationId) {
   }
 }
 
-// Sync daftar grup WhatsApp di server Fonnte
-async function syncFonnteGroups() {
-  if (!FONNTE_TOKEN) return false;
-  try {
-    console.log('[Fonnte API] Menyinkronkan daftar grup WhatsApp...');
-    const res = await fetch('https://api.fonnte.com/fetch-group', {
-      method: 'POST',
-      headers: { 'Authorization': FONNTE_TOKEN }
-    });
-    const data = await res.json();
-    if (data.status) {
-      console.log('[Fonnte API] ✅ Sinkronisasi grup WhatsApp selesai.');
-      return true;
-    }
-  } catch (err) {
-    console.error('[Fonnte API] Gagal sync grup:', err.message);
-  }
-  return false;
-}
+// Kirim pesan ke WhatsApp via Baileys Multi-Device (koneksi langsung, satu-satunya gateway)
+const BAILEYS_READY_WAIT_MS = 20000; // Tunggu maksimal 20 detik bila socket sedang reconnect
+async function sendWhatsApp(target, message) {
+  markSent(message);
 
-// Kirim pesan ke WhatsApp via Fonnte (Mendukung nomor pribadi & ID grup dengan auto-retry)
-async function sendWhatsApp(target, message, isRetry = false) {
-  if (!FONNTE_TOKEN) {
-    console.log('[WA] Token tidak tersedia. Pesan tidak dikirim:', message);
+  // Bila socket sedang reconnect (mis. setelah putus jaringan), tunggu sebentar agar
+  // pengingat cron / balasan tidak hilang begitu saja.
+  const deadline = Date.now() + BAILEYS_READY_WAIT_MS;
+  while (!getBaileysStatus().ready && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 1000));
+  }
+  if (!getBaileysStatus().ready) {
+    console.error(`[WA Baileys] ❌ Baileys belum terhubung, pesan ke ${target} tidak terkirim:`, message.slice(0, 80));
     return false;
   }
+
   try {
-    markSent(message);
-    const formData = new URLSearchParams();
-    formData.append('target', target);
-    formData.append('message', message);
-    formData.append('countryCode', '62');
-
-    const res = await fetch('https://api.fonnte.com/send', {
-      method: 'POST',
-      headers: { 'Authorization': FONNTE_TOKEN },
-      body: formData
-    });
-
-    const data = await res.json();
-    if (data.status) {
-      console.log(`[WA] ✅ Pesan terkirim ke target: ${target}`);
-      return true;
-    } else {
-      console.error(`[WA] ⚠️ Gagal kirim ke target ${target}:`, data.reason || JSON.stringify(data));
-
-      if (!isRetry && data.reason?.toLowerCase().includes('invalid group id')) {
-        console.log(`[WA] 🔄 Terdeteksi 'invalid group id'. Menyinkronkan daftar grup Fonnte lalu mencoba kirim ulang...`);
-        await syncFonnteGroups();
-        await new Promise(r => setTimeout(r, 2000));
-        return await sendWhatsApp(target, message, true);
-      }
-
-      return false;
-    }
-  } catch (err) {
-    console.error(`[WA] ❌ Error kirim pesan:`, err.message);
-    return false;
-  }
-}
-
-// Update webhook Fonnte secara otomatis via API
-async function updateFonnteWebhook(webhookUrl) {
-  try {
-    console.log(`[Fonnte API] Mendaftarkan webhook URL: ${webhookUrl}...`);
-    const params = new URLSearchParams({
-      name: DEVICE_NAME,
-      device: DEVICE_NUMBER,
-      webhook: webhookUrl,
-      autoread: 'true',
-      personal: 'true',
-      quick: 'true',
-      group: 'true'
-    });
-
-    const res = await fetch('https://api.fonnte.com/update-device', {
-      method: 'POST',
-      headers: { 'Authorization': FONNTE_TOKEN },
-      body: params
-    });
-
-    const data = await res.json();
-    if (data.status) {
-      console.log(`[Fonnte API] ✅ Webhook & Fitur Grup berhasil diperbarui di Fonnte: ${webhookUrl}`);
-      return true;
-    } else {
-      console.warn(`[Fonnte API] ⚠️ Gagal update webhook:`, data.reason || JSON.stringify(data));
-      return false;
-    }
-  } catch (err) {
-    console.error(`[Fonnte API] ❌ Error update device:`, err.message);
+    await sendBaileysMessage(target, message);
+    console.log(`[WA Baileys] ✅ Pesan terkirim langsung ke: ${target}`);
+    return true;
+  } catch (bErr) {
+    console.error(`[WA Baileys] ❌ Gagal kirim ke ${target}:`, bErr.message);
     return false;
   }
 }
@@ -440,14 +537,21 @@ function readTranscript(conversationId) {
 }
 
 // Tunggu hingga Antigravity selesai mengeksekusi dan mengambil respons
-async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitMs = 180000) {
+async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitMs = 600000, targetRecipient = null, senderName = '') {
   const pollInterval = 1200;
   const startTime = Date.now();
   let candidateStepIndex = -1;
   let candidateContent = null;
   let capturedSendMessage = null;
+  let lastActiveTime = Date.now();
+  let highestStepIndex = startStepIndex;
+  let hasSentProgressNotice = false;
+  let lastProgressNoticeTime = 0;
 
   console.log(`[Agent] Menunggu respons untuk percakapan ${conversationId} (mulai index ${startStepIndex})...`);
+
+  // Batas toleransi hening jika Joko benar-benar idle tanpa step baru sama sekali (3 menit)
+  const idleTimeoutMs = 180000;
 
   while (Date.now() - startTime < maxWaitMs) {
     await new Promise(resolve => setTimeout(resolve, pollInterval));
@@ -458,6 +562,14 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
     const newSteps = steps.filter(s => typeof s.step_index === 'number' && s.step_index >= startStepIndex);
     if (newSteps.length === 0) continue;
 
+    const latest = newSteps[newSteps.length - 1];
+
+    // Deteksi aktivitas baru: jika step_index bertambah, Joko terbukti aktif bekerja!
+    if (latest.step_index > highestStepIndex) {
+      highestStepIndex = latest.step_index;
+      lastActiveTime = Date.now(); // Reset timer idle karena masih ada langkah aktif
+    }
+
     for (const s of newSteps) {
       if (s.tool_calls && Array.isArray(s.tool_calls)) {
         const smCall = s.tool_calls.find(t => t.name === 'send_message');
@@ -467,7 +579,25 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
       }
     }
 
-    const latest = newSteps[newSteps.length - 1];
+    // Jika proses memakan waktu lebih dari 35 detik dan Joko masih sibuk bekerja, informasikan ke WhatsApp
+    const elapsedMs = Date.now() - startTime;
+    if (elapsedMs > 35000 && !hasSentProgressNotice && targetRecipient) {
+      let currentTaskSummary = 'menjalankan instruksi Mas';
+      if (latest.tool_calls && latest.tool_calls.length > 0) {
+        const activeTool = latest.tool_calls[0];
+        currentTaskSummary = activeTool.toolSummary || activeTool.name || 'memproses data';
+      }
+      const progressNotice = `Siap Mas Andika! Joko sedang mengerjakan tugas ini di laptop ya (saat ini sedang ${currentTaskSummary}). Langkahnya cukup mendalam, mohon tunggu sebentar ya Mas... Begitu tuntas langsung Joko kabari! ⏳☕`;
+      console.log(`[Agent] 📢 Mengirim status progres aktif ke WhatsApp: "${progressNotice}"`);
+      sendWhatsApp(targetRecipient, progressNotice).catch(e => console.error('[WA Progress] Error:', e.message));
+      hasSentProgressNotice = true;
+      lastProgressNoticeTime = Date.now();
+    } else if (elapsedMs > 180000 && hasSentProgressNotice && (Date.now() - lastProgressNoticeTime > 180000) && targetRecipient) {
+      const updateNotice = `Joko masih terus aktif memproses tugas Mas Andika di laptop ya. Langkahnya tetap berjalan lancar dan sebentar lagi selesai! ⏳☕`;
+      console.log(`[Agent] 📢 Mengirim status progres lanjutan ke WhatsApp`);
+      sendWhatsApp(targetRecipient, updateNotice).catch(e => console.error('[WA Progress] Error:', e.message));
+      lastProgressNoticeTime = Date.now();
+    }
 
     if (
       latest.source === 'MODEL' &&
@@ -490,6 +620,12 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
         continue;
       }
     }
+
+    // Hanya hentikan jika Joko benar-benar berhenti beraktivitas (idle tanpa step baru selama 3 menit penuh)
+    if (Date.now() - lastActiveTime > idleTimeoutMs) {
+      console.warn(`[Agent] ⚠️ Tidak ada aktivitas step baru dari Joko selama ${idleTimeoutMs / 1000} detik.`);
+      break;
+    }
   }
 
   if (candidateContent) {
@@ -500,41 +636,129 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
   }
   if (capturedSendMessage) return cleanHumanResponse(capturedSendMessage);
 
-  throw new Error('Waktu tunggu habis (timeout).');
+  throw new Error('Waktu tunggu habis (proses memakan waktu lama).');
+}
+
+// Unified AI Invocation: Mendukung Standalone Headless CLI (EC2 Cloud) & Desktop IDE Bridge (Laptop)
+async function askAgy(prompt, isNewConversation = true, targetRecipient = null, senderName = '') {
+  const isLinux = process.platform === 'linux';
+  const creds = isLinux ? null : getAntigravityCredentials();
+
+  // 1. Mode Standalone CLI (Digunakan di Linux/AWS EC2 24/7 atau jika IDE tidak aktif)
+  if (!creds) {
+    console.log(`[Agent] ☁️ Menjalankan Antigravity CLI standalone (Google Pro Cloud)...`);
+    const args = [];
+    if (!isNewConversation) {
+      args.push('-c');
+    }
+    args.push('-p', prompt);
+
+    const env = {
+      ...process.env,
+      PATH: process.platform === 'linux' ? `/home/ubuntu/.local/bin:${process.env.PATH || ''}` : process.env.PATH
+    };
+
+    const { stdout, stderr } = await execFileAsync(AGY_PATH, args, {
+      cwd: process.cwd(),
+      maxBuffer: 10 * 1024 * 1024,
+      env,
+      timeout: 60000, // Timeout eksekusi 60 detik agar tidak pernah hang tanpa batas
+      windowsHide: true
+    });
+
+    const trimmedOut = (stdout || '').trim();
+    const cleanResult = cleanHumanResponse(trimmedOut);
+    if (cleanResult) return cleanResult;
+    if (trimmedOut) return trimmedOut;
+    const errDetail = (stderr || '').trim() || 'Tidak ada output teks dari Antigravity CLI. Pastikan akun Google Pro sudah login via login-antigravity-aws.bat.';
+    console.warn('[Agent CLI Detail]:', errDetail);
+    throw new Error(errDetail);
+  }
+
+  // 2. Mode Desktop IDE Bridge (Digunakan di Laptop Windows saat Antigravity IDE dibuka)
+  let activeConversationId = getSavedSession();
+  let startStepIndex = 0;
+
+  if (isNewConversation || !activeConversationId) {
+    console.log(`[Agent] Membuka sesi baru IDE untuk ${senderName || 'user'}...`);
+    const { stdout } = await callAgy([
+      'agentapi',
+      'new-conversation',
+      '--model=flash',
+      prompt
+    ]);
+    const res = JSON.parse(stdout);
+    activeConversationId = res?.response?.newConversation?.conversationId;
+    if (!activeConversationId) throw new Error(`Gagal mendapatkan conversationId dari agy: ${stdout}`);
+    saveSession(activeConversationId);
+    startStepIndex = 1;
+  } else {
+    console.log(`[Agent] Mengirim pesan ke sesi IDE ${activeConversationId}...`);
+    const currentSteps = readTranscript(activeConversationId);
+    startStepIndex = currentSteps.length > 0 ? (currentSteps[currentSteps.length - 1].step_index + 1) : 0;
+    try {
+      await callAgy([
+        'agentapi',
+        'send-message',
+        activeConversationId,
+        prompt
+      ]);
+    } catch (sendErr) {
+      console.warn(`[Agent] ⚠️ Sesi lama ${activeConversationId} tidak merespon. Auto-recovery dengan sesi baru...`);
+      const { stdout } = await callAgy([
+        'agentapi',
+        'new-conversation',
+        '--model=flash',
+        prompt
+      ]);
+      const res = JSON.parse(stdout);
+      activeConversationId = res?.response?.newConversation?.conversationId;
+      if (!activeConversationId) throw sendErr;
+      saveSession(activeConversationId);
+      startStepIndex = 1;
+    }
+  }
+
+  return await waitForAgentResponse(activeConversationId, startStepIndex, 600000, targetRecipient, senderName);
 }
 
 // Eksekusi prompt standalone untuk Cron Job Antigravity
 async function executeCronWithAntigravity(taskPrompt) {
   console.log(`[Cron Agent] Membuka sesi eksekusi baru untuk tugas terjadwal...`);
   const fullPrompt = `${SYSTEM_PERSONA}\n\n${taskPrompt}`;
-
-  const { stdout } = await execFileAsync(AGY_PATH, [
-    'agentapi',
-    'new-conversation',
-    '--model=flash',
-    fullPrompt
-  ]);
-
-  const res = JSON.parse(stdout);
-  const convId = res?.response?.newConversation?.conversationId;
-  if (!convId) throw new Error('Gagal inisialisasi percakapan Antigravity');
-
-  const responseText = await waitForAgentResponse(convId, 1);
-  return responseText;
+  return await askAgy(fullPrompt, true);
 }
 
 // Eksekusi prompt percakapan dengan Antigravity CLI
 let isProcessing = false;
+let processingStartTime = 0;
+let lastBusyNoticeTime = 0;
+const BUSY_NOTICE_COOLDOWN_MS = 120000; // Maksimal 1 pemberitahuan sibuk per 2 menit
+const WATCHDOG_TIMEOUT_MS = 90000;      // Maksimal 90 detik sebelum watchdog auto-reset status sibuk
 let lastSeenStepIndex = 0;
 let lastTargetRecipient = null;
 
 async function executeWithAntigravity(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner) {
+  const now = Date.now();
+
+  // Watchdog Pengaman: Jika flag isProcessing tersangkut > 90 detik, paksa reset agar Joko tidak hang
+  if (isProcessing && (now - processingStartTime > WATCHDOG_TIMEOUT_MS)) {
+    console.warn(`[Agent Watchdog] ⚠️ Flag isProcessing tersangkut selama ${Math.round((now - processingStartTime)/1000)}s! Mereset otomatis ke standby...`);
+    isProcessing = false;
+  }
+
   if (isProcessing) {
-    console.log('[Agent] Joko sedang memproses tugas lain, permintaan diantrekan...');
+    console.log('[Agent] Joko sedang memproses tugas sebelumnya...');
+    // Rate Limiter: Hanya kirim notifikasi sibuk jika sudah lewat 2 menit dari notifikasi terakhir
+    if (isOwner && (now - lastBusyNoticeTime > BUSY_NOTICE_COOLDOWN_MS)) {
+      lastBusyNoticeTime = now;
+      await sendWhatsApp(targetRecipient, `Siap Mas Andika! Joko sedang memproses instruksi sebelumnya. Mohon tunggu sebentar ya Mas, begitu selesai langsung Joko kabari! ⏳☕`);
+    }
     return;
   }
 
   isProcessing = true;
+  processingStartTime = Date.now();
   lastTargetRecipient = targetRecipient;
   let activeConversationId = getSavedSession();
 
@@ -564,6 +788,45 @@ ${liveTJ.buses.length > 0 ? liveTJ.buses.slice(0, 3).map((b, i) => `  ${i+1}. Ar
       }
     }
 
+    let webIntelContext = '';
+    const urlMatch = userPrompt.match(/https?:\/\/[^\s]+/i);
+    if (urlMatch) {
+      console.log(`[Web Intelligence] 🌐 Mendeteksi link URL: ${urlMatch[0]}`);
+      try {
+        const scraped = await scrapeUrl(urlMatch[0]);
+        if (scraped.success) {
+          webIntelContext = `\n[HASIL SCRAPING WEBSITE NYATA]:
+• Judul: ${scraped.title}
+• Deskripsi: ${scraped.description}
+• Penulis: ${scraped.author}
+• Jumlah Kata: ${scraped.wordCount}
+• Isi Artikel/Konten:
+${scraped.text.slice(0, 3500)}
+(PENTING: Gunakan isi artikel nyata di atas untuk menjawab permintaan pengguna atau merangkumnya secara padat, tajam, dan akurat).\n\n`;
+        }
+      } catch (err) {
+        console.error('[Web Intelligence] Error scraping URL:', err.message);
+      }
+    } else {
+      const newsTopicMatch = userPrompt.match(/(?:cari|riset|pantau|cek)\s+(?:berita|info|kabar|tren|artikel)\s+(?:tentang|seputar|soal)\s+(.+)/i);
+      if (newsTopicMatch) {
+        const topic = newsTopicMatch[1].trim();
+        console.log(`[Web Intelligence] 📰 Riset topik berita: "${topic}"`);
+        try {
+          const newsRes = await searchAndScrapeTopic(topic, 3);
+          if (newsRes.success && newsRes.articles.length > 0) {
+            webIntelContext = `\n[HASIL RISET BERITA TERKINI]:
+${newsRes.articles.map((a, i) => `${i+1}. "${a.title}" (${a.pubDate})
+   Link: ${a.link}
+   Snippet: ${a.snippet}`).join('\n\n')}
+(PENTING: Gunakan berita nyata di atas untuk memberikan ringkasan atau materi postingan yang segar dan akurat).\n\n`;
+          }
+        } catch (err) {
+          console.error('[Web Intelligence] Error research topic:', err.message);
+        }
+      }
+    }
+
     let promptContext = '';
     if (isGroup) {
       const recentGroupHistory = getRecentGroupHistory(targetRecipient, 25);
@@ -572,47 +835,27 @@ ${liveTJ.buses.length > 0 ? liveTJ.buses.slice(0, 3).map((b, i) => `  ${i+1}. Ar
         : '';
 
       if (isOwner) {
-        promptContext = `${historyText}${tjContext}[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung di grup secara ramah, santai, dan solutif. Jika Mas Andika bertanya mengenai konteks atau rangkuman obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara akurat dan nyambung. Langsung berikan SATU respon/rekomendasi terbaik tanpa opsi pilihan ganda. JANGAN PERNAH gunakan tool schedule atau send_message).`;
+        promptContext = `${historyText}${tjContext}${webIntelContext}[Pesan di Grup WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung di grup secara ramah, santai, dan solutif. Jika Mas Andika bertanya mengenai konteks atau rangkuman obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara akurat dan nyambung. Langsung berikan SATU respon/rekomendasi terbaik tanpa opsi pilihan ganda. JANGAN gunakan BypassSandbox: true (wajib sandboxed agar tidak memicu dialog popup allow di laptop), JANGAN gunakan tool ask_question, JANGAN minta review/submit di UI laptop, JANGAN gunakan tool schedule atau send_message. Eksekusi tugas sampai tuntas secara mandiri).`;
       } else {
-        promptContext = `${historyText}${tjContext}[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Jika pengguna bertanya mengenai konteks atau obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara cerdas dan akurat. Langsung berikan SATU rekomendasi terbaik tanpa opsi pilihan ganda. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini. JANGAN PERNAH gunakan tool schedule atau send_message).`;
+        promptContext = `${historyText}${tjContext}${webIntelContext}[Pesan di Grup WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Jika pengguna bertanya mengenai konteks atau obrolan grup, manfaatkan [Riwayat Percakapan Terakhir] di atas untuk menjawab secara cerdas dan akurat. Langsung berikan SATU rekomendasi terbaik tanpa opsi pilihan ganda. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer untuk pengguna ini. JANGAN gunakan tool ask_question, JANGAN gunakan tool schedule atau send_message).`;
       }
     } else {
-      promptContext = `${tjContext}[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. Langsung berikan SATU rekomendasi jawaban/ucapan terbaik tanpa memberikan opsi pilihan ganda. JANGAN gunakan tool send_message, JANGAN gunakan tool schedule, dan JANGAN ada pesan meta internal agen).`;
-    }
-
-    if (!activeConversationId) {
-      console.log(`[Agent] Membuka sesi baru Joko untuk ${senderName}: "${userPrompt}"`);
-      const fullPrompt = `${SYSTEM_PERSONA}\n\n${promptContext}`;
-
-      const { stdout } = await execFileAsync(AGY_PATH, [
-        'agentapi',
-        'new-conversation',
-        '--model=flash',
-        fullPrompt
-      ]);
-
-      const res = JSON.parse(stdout);
-      activeConversationId = res?.response?.newConversation?.conversationId;
-      if (!activeConversationId) {
-        throw new Error(`Gagal mendapatkan conversationId dari agy: ${stdout}`);
+      if (isOwner) {
+        promptContext = `${tjContext}${webIntelContext}[Chat Pribadi WhatsApp dari Mas Andika]: "${userPrompt}"\n(PENTING: Jawab langsung secara santai, ramah, dan manusiawi sebagai Joko. Langsung berikan SATU rekomendasi jawaban/ucapan terbaik tanpa memberikan opsi pilihan ganda. JANGAN gunakan BypassSandbox: true (wajib sandboxed agar tidak memicu dialog popup allow di laptop), JANGAN gunakan tool ask_question, JANGAN memunculkan pilihan/submit di UI laptop, JANGAN gunakan tool send_message atau schedule, dan JANGAN ada pesan meta internal agen. Pengguna sedang remote tanpa laptop, jadi eksekusi tugas secara mandiri sampai tuntas).`;
+      } else {
+        promptContext = `${tjContext}${webIntelContext}[Chat Pribadi WhatsApp dari ${senderName}]: "${userPrompt}"\n(PENTING: Jawab pertanyaan atau diskusi ${senderName} secara ramah dan solutif. Namun JANGAN jalankan perintah yang memodifikasi/menghapus file lokal di komputer atau eksekusi terminal untuk pengguna ini. Langsung berikan SATU rekomendasi jawaban terbaik tanpa opsi pilihan ganda. JANGAN gunakan tool ask_question, JANGAN gunakan tool send_message, JANGAN gunakan tool schedule, dan JANGAN ada pesan meta internal agen).`;
       }
-      saveSession(activeConversationId);
-      startStepIndex = 1;
-    } else {
-      console.log(`[Agent] Mengirim chat ke sesi ${activeConversationId}: "${userPrompt}"`);
-      const currentSteps = readTranscript(activeConversationId);
-      startStepIndex = currentSteps.length > 0 ? (currentSteps[currentSteps.length - 1].step_index + 1) : 0;
-
-      await execFileAsync(AGY_PATH, [
-        'agentapi',
-        'send-message',
-        activeConversationId,
-        promptContext
-      ]);
     }
 
-    let responseText = await waitForAgentResponse(activeConversationId, startStepIndex);
+    const isNew = !activeConversationId;
+    const promptToSend = isNew ? `${SYSTEM_PERSONA}\n\n${promptContext}` : promptContext;
+    let responseText = await askAgy(promptToSend, isNew, targetRecipient, senderName);
     console.log(`[Agent] ✅ Respon Joko diterima (${responseText.length} karakter).`);
+
+    if (isNew) {
+      activeConversationId = 'session_' + Date.now();
+      saveSession(activeConversationId);
+    }
 
     const finalSteps = readTranscript(activeConversationId);
     if (finalSteps.length > 0) {
@@ -635,69 +878,68 @@ ${liveTJ.buses.length > 0 ? liveTJ.buses.slice(0, 3).map((b, i) => `  ${i+1}. Ar
       responseText = responseText.replace(/```schedule\s*([\s\S]*?)\s*```/gi, '').trim();
     }
 
+    // Deteksi jika AI menyertakan blok konten Threads untuk di-upload otomatis
+    const threadsBlockMatch = responseText.match(/```threads\s*([\s\S]*?)\s*```/i);
+    if (threadsBlockMatch && isOwner) {
+      const threadToPost = threadsBlockMatch[1].trim();
+      try {
+        console.log(`[AI Threads Poster] 🚀 Memposting konten yang dibuat AI ke Threads...`);
+        const postRes = await postToThreads(threadToPost);
+        responseText = responseText.replace(/```threads\s*([\s\S]*?)\s*```/gi, '$1').trim();
+        if (postRes && postRes.verifiedOnProfile) {
+          responseText += `\n\n*(✅ Utas ini sudah otomatis Joko upload dan TERVERIFIKASI tayang di profil Threads Mas Andika! 🚀)*`;
+        } else {
+          responseText += `\n\n*(✅ Utas ini sudah diproses dan dikirim ke Threads Mas Andika! 🚀)*`;
+        }
+      } catch (err) {
+        console.error('[AI Threads Poster] Gagal upload:', err.message);
+        responseText = responseText.replace(/```threads\s*([\s\S]*?)\s*```/gi, '$1').trim();
+        responseText += `\n\n*(⚠️ Catatan: Utas belum ter-upload otomatis: ${err.message}. Pastikan sudah login via \`Joko login threads\` ya Mas!)*`;
+      }
+    }
+
     await sendWhatsApp(targetRecipient, responseText);
 
   } catch (err) {
     console.error('[Agent] ❌ Error:', err.message);
-    await sendWhatsApp(targetRecipient, `Waduh Mas, ada kendala saat Joko memproses chat ini: ${err.message}`);
+    const isConnError = /unavailable|dial tcp|connection error|connectex|failed to connect/i.test(err.message);
+    const isTimeout = /timeout|waktu tunggu habis|waktu lebih lama/i.test(err.message);
+    let friendlyMsg = '';
+    if (isConnError) {
+      friendlyMsg = `Waduh Mas Andika, server AI sepertinya sedang memulai ulang. Mohon tunggu sebentar ya Mas, Joko langsung siap kembali! ☕`;
+    } else if (isTimeout) {
+      friendlyMsg = `Waduh Mas Andika, tugas ini sedang diproses secara mendalam oleh Joko sehingga butuh waktu sedikit lebih lama. Prosesnya tetap berjalan ya Mas! ⏳☕`;
+    } else {
+      friendlyMsg = `Waduh Mas Andika, ada kendala saat Joko memproses instruksi ini: ${err.message}. Joko sedang memulihkan koneksi ya Mas! ☕`;
+    }
+    await sendWhatsApp(targetRecipient, friendlyMsg);
   } finally {
     isProcessing = false;
+    processingStartTime = 0;
   }
 }
 
-// Setup HTTP Server Webhook
-const server = http.createServer((req, res) => {
-  if (req.method === 'GET') {
-    const jokoState = getJokoState();
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
-      status: 'active',
-      name: 'Joko (Personal AI Assistant)',
-      mode: jokoState.isAsleep ? 'SLEEP (Tidur)' : 'AWAKE (Aktif)',
-      port: PORT,
-      timestamp: new Date().toISOString()
-    }));
+// Handler Utama Pemrosesan Pesan Masuk (dipanggil oleh Baileys Direct Socket)
+async function processIncomingMessage({ rawSender, rawMember, rawDevice, rawMessage, senderName = 'Teman', senderNumber: explicitSenderNumber = null, isFromMe = false }) {
+  if (!rawMessage || !rawSender) return;
+
+  if (isOurOwnMessage(rawMessage)) {
     return;
   }
 
-  if (req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', async () => {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: true }));
-
-      try {
-        let payload = {};
-        if (req.headers['content-type']?.includes('application/json')) {
-          payload = JSON.parse(body || '{}');
-        } else {
-          const params = new URLSearchParams(body);
-          payload = Object.fromEntries(params.entries());
-        }
-
-        const rawSender = String(payload.sender || payload.phone || '').trim();
-        const rawMember = String(payload.member || payload.participant || '').trim();
-        const rawDevice = String(payload.device || DEVICE_NUMBER || '').replace(/[^0-9]/g, '');
-        const rawMessage = (payload.message || payload.text || '').trim();
-        const senderName = payload.name || 'Teman';
-
-        if (!rawMessage || !rawSender) return;
-
-        if (isOurOwnMessage(rawMessage)) {
-          return;
-        }
+  try {
 
         const isGroup = rawSender.endsWith('@g.us') || rawSender.includes('@g.us');
-        const targetRecipient = rawSender;
 
         let senderNumber = '';
-        if (isGroup) {
+        if (explicitSenderNumber) {
+          senderNumber = String(explicitSenderNumber).replace(/[^0-9]/g, '');
+        } else if (isGroup) {
           if (rawMember && !rawMember.includes('@g.us')) {
             senderNumber = rawMember.replace(/[^0-9]/g, '');
           } else {
             // Di grup, jika rawMember kosong atau berisi ID grup itu sendiri,
-            // berarti pesan dikirim langsung dari nomor WhatsApp Mas Andika sendiri (Device Fonnte)
+            // berarti pesan dikirim langsung dari nomor WhatsApp Mas Andika sendiri (device Baileys)
             senderNumber = rawDevice || '6282163850914';
           }
         } else {
@@ -705,17 +947,20 @@ const server = http.createServer((req, res) => {
         }
 
         // Penentuan Owner (Mas Andika):
-        // 1. Nomor telepon senderNumber ada di whitelist AUTHORIZED_TARGETS
-        // 2. ATAU pesan di grup tanpa rawMember (dikirim langsung dari akun WhatsApp Mas Andika)
-        // 3. ATAU nama pengirim mengandung 'Andika'
-        const isOwner = AUTHORIZED_TARGETS.has(senderNumber) ||
-                        (isGroup && (!rawMember || rawMember.includes('@g.us'))) ||
-                        /andika/i.test(senderName);
+        // 1. Pesan diketik langsung dari HP akun WhatsApp Mas Andika sendiri (isFromMe)
+        // 2. Nomor pengirim terdaftar di AUTHORIZED_TARGETS (6282163850914)
+        // 3. ATAU nama pengirim adalah profil resmi WhatsApp Mas Andika ('11423021_AndikaTampubolon')
+        // 4. ATAU di grup dikirim langsung dari device WhatsApp Mas Andika sendiri
+        const isOwner = isFromMe ||
+                        AUTHORIZED_TARGETS.has(senderNumber) ||
+                        senderName === '11423021_AndikaTampubolon' ||
+                        senderName.includes('AndikaTampubolon') ||
+                        (isGroup && (!rawMember || rawMember.includes('@g.us')));
 
-        // Pastikan jika isOwner terverifikasi, nomor yang tercatat selalu nomor Mas Andika
-        if (isOwner && !AUTHORIZED_TARGETS.has(senderNumber)) {
-          senderNumber = '6282163850914';
-        }
+        // KUNCI TARGET PENERIMA:
+        // Di grup, kirim balasan ke ID grup.
+        // Di chat pribadi, selalu kirim balasan langsung ke ruang chat aktif tersebut (rawSender).
+        const targetRecipient = rawSender;
 
         // ==========================================
         // 1. KONTROL TIDUR / BANGUN JOKO (OWNER ONLY)
@@ -827,14 +1072,145 @@ const server = http.createServer((req, res) => {
 
         } else {
           // Di chat pribadi:
-          if (!isOwner) {
-            console.log(`[Security] ⛔ Chat pribadi dari ${senderNumber} ditolak (bukan Owner).`);
+          const isAllowedPersonal = isPersonalMemberAllowed(senderNumber);
+
+          // Kontrol Akses Personal (Khusus Mas Andika / Owner):
+          // Mas Andika bisa menambahkan atau mencabut nomor teman yang boleh chat dengan Joko:
+          // Contoh: "Joko beri akses personal ke 08123456789"
+          // Contoh: "Joko cabut akses personal dari 08123456789"
+          // Contoh: "/whitelist" atau "Joko daftar akses personal"
+          if (isOwner) {
+            const grantMatch = rawMessage.match(/(?:kasih|beri|buka|izinkan|tambah)\s+akses\s+(?:personal|pribadi|chat)?.*?([0-9\+]{8,16})/i);
+            if (grantMatch) {
+              const addedNum = grantPersonalAccess(grantMatch[1]);
+              await sendWhatsApp(targetRecipient, `Siap Mas Andika! Akses chat pribadi untuk nomor *${addedNum}* sudah dibuka ya. Teman Mas sekarang bisa chat langsung 1-on-1 dengan Joko! 🎉`);
+              return;
+            }
+
+            const revokeMatch = rawMessage.match(/(?:cabut|kunci|tutup|hapus)\s+akses\s+(?:personal|pribadi|chat)?.*?([0-9\+]{8,16})/i);
+            if (revokeMatch) {
+              const removedNum = revokePersonalAccess(revokeMatch[1]);
+              await sendWhatsApp(targetRecipient, `Siap Mas Andika! Akses chat pribadi untuk nomor *${removedNum}* telah dicabut kembali. 🔒`);
+              return;
+            }
+
+            if (/^(?:!joko\s+|joko\s*[:,-]?\s*)?(?:\/whitelist|list\s+akses|daftar\s+akses|cek\s+akses)/i.test(rawMessage.trim())) {
+              const currentList = Array.from(loadAllowedPersonalUsers());
+              if (currentList.length === 0) {
+                await sendWhatsApp(targetRecipient, `Saat ini belum ada nomor teman yang diizinkan chat personal dengan Joko.\n\nUntuk memberi akses ke teman, ketik:\n\`Joko beri akses personal ke 08xxxxxxxxxx\``);
+              } else {
+                await sendWhatsApp(targetRecipient, `📋 *Daftar Teman Diizinkan Chat Personal:*\n${currentList.map(n => `• \`${n}\``).join('\n')}\n\nUntuk mencabut akses, ketik:\n\`Joko cabut akses personal dari <nomor>\``);
+              }
+              return;
+            }
+
+            // Perintah Set Session Cookie Threads: "Joko session threads <sessionid>"
+            const sessionMatch = rawMessage.match(/^(?:!joko\s+|joko\s*[:,-]?\s*)?(?:set\s+)?session\s+(?:cookie\s+)?threads\s*[:,-]?\s*(.+)/i);
+            if (sessionMatch && sessionMatch[1].trim()) {
+              const sessionIdValue = sessionMatch[1].trim();
+              try {
+                saveSessionIdCookie(sessionIdValue);
+                await sendWhatsApp(targetRecipient, `✅ *Berhasil Terhubung!* Sesi login Threads Mas Andika telah aktif di server awan Joko. 🍪🚀\n\nSekarang Mas Andika bisa langsung minta: *"Joko buat utas threads lagi yuk"* dan Joko akan otomatis langsung mengunggahnya!`);
+              } catch (err) {
+                await sendWhatsApp(targetRecipient, `Waduh Mas, gagal menyimpan session Threads: ${err.message}`);
+              }
+              return;
+            }
+
+            // Perintah Buka Browser untuk Login Threads
+            if (/^(?:!joko\s+|joko\s*[:,-]?\s*)?(?:login|buka(?:\s+browser)?(?:\s+ke)?)\s+threads\b/i.test(rawMessage.trim())) {
+              await sendWhatsApp(targetRecipient, `Siap Mas Andika! Joko sedang membukakan browser Chrome di laptop Mas. Silakan login akun Threads Mas di jendela tersebut sekali ini ya. Nanti sesi loginnya tersimpan permanen! 🌐`);
+              try {
+                await openThreadsLogin();
+              } catch (e) {
+                console.error('[Threads Login Error]:', e.message);
+              }
+              return;
+            }
+
+            // Perintah Cek Status Login Threads
+            if (/^(?:!joko\s+|joko\s*[:,-]?\s*)?(?:cek|status)\s+login\s+threads\b/i.test(rawMessage.trim())) {
+              await sendWhatsApp(targetRecipient, `Sebentar ya Mas, Joko cek status login akun Threads di browser laptop... 🔍`);
+              const status = await checkThreadsLogin();
+              if (status.isLoggedIn) {
+                await sendWhatsApp(targetRecipient, `✅ Akun Threads Mas Andika *sudah login dan aktif*! Joko siap posting konten kapan pun Mas perintahkan. 🚀`);
+              } else {
+                await sendWhatsApp(targetRecipient, `⚠️ Akun Threads *belum login* di browser. Ketik \`Joko login threads\` agar Joko bukakan browsernya untuk login ya Mas. 🌐`);
+              }
+              return;
+            }
+
+            // Perintah Langsung Posting ke Threads: "Joko posting ke threads: <isi>" atau "Joko upload ke threads: <isi>"
+            const directPostMatch = rawMessage.match(/^(?:!joko\s+|joko\s*[:,-]?\s*)?(?:posting|upload|kirim)\s+(?:ke\s+)?threads\s*[:,-]?\s*(.*)/is);
+            if (directPostMatch && directPostMatch[1].trim()) {
+              const threadContent = directPostMatch[1].trim();
+              await sendWhatsApp(targetRecipient, `Siap Mas Andika! Joko sedang meluncurkan browser untuk memposting utas ke Threads Mas:\n\n"${threadContent.slice(0, 80)}..." ⏳`);
+              try {
+                const res = await postToThreads(threadContent);
+                await sendWhatsApp(targetRecipient, `🎉 *Berhasil Diposting ke Threads!* \n\nUtas Mas Andika sudah resmi tayang di Threads pada ${new Date(res.postedAt).toLocaleTimeString('id-ID')} WIB. Keren banget! 🚀🔥`);
+              } catch (postErr) {
+                await sendWhatsApp(targetRecipient, `Waduh Mas, gagal posting ke Threads: ${postErr.message}\n\nPastikan Mas sudah login dengan mengetik \`Joko login threads\` ya! 🙏`);
+              }
+              return;
+            }
+
+            // Perintah Minta Morning Executive Briefing: "Joko briefing pagi" atau "Joko kirim briefing"
+            if (isBriefingCommand(rawMessage)) {
+              await sendWhatsApp(targetRecipient, `Siap Mas Andika! Joko sedang merangkum cuaca, kondisi komuter, tren AI terkini, dan draft Threads hari ini... ⏳☕`);
+              try {
+                const briefing = await generateExecutiveBriefing();
+                await sendWhatsApp(targetRecipient, briefing.text);
+              } catch (bErr) {
+                console.error('[Executive Briefing Error]:', bErr.message);
+                await sendWhatsApp(targetRecipient, `Waduh Mas, ada kendala saat menyusun briefing: ${bErr.message}`);
+              }
+              return;
+            }
+
+            // Perintah Langsung Posting Draft Threads Hasil Briefing: "Joko posting draft threads tadi" atau "gas posting threads"
+            if (isPostDraftThreadCommand(rawMessage)) {
+              const draft = getLatestDraftThread();
+              if (!draft) {
+                await sendWhatsApp(targetRecipient, `Belum ada draft Threads dari briefing pagi ini, Mas. Mas Andika bisa ketik \`Joko briefing pagi\` dulu ya! ☕`);
+                return;
+              }
+              await sendWhatsApp(targetRecipient, `Siap Mas Andika! Joko langsung meluncurkan browser untuk upload draft Threads tadi ke akun @andikatampubolon._ ya... 🚀`);
+              try {
+                const res = await postToThreads(draft);
+                await sendWhatsApp(targetRecipient, `🎉 *Berhasil Diposting ke Threads!* 🚀\n\nUtas Mas Andika sudah resmi tayang di Threads pada ${new Date(res.postedAt).toLocaleTimeString('id-ID')} WIB:\n\n"${draft}"`);
+              } catch (postErr) {
+                await sendWhatsApp(targetRecipient, `Waduh Mas, gagal posting ke Threads: ${postErr.message}\n\nPastikan akun sudah login via \`Joko login threads\` ya! 🙏`);
+              }
+              return;
+            }
+          }
+
+          if (!isOwner && !isAllowedPersonal) {
+            console.log(`[Security] ⛔ Chat pribadi dari ${senderName} (${senderNumber}) diabaikan (bukan Owner dan belum ada di whitelist personal).`);
             return;
           }
 
-          // Bersihkan awalan nama "Joko" jika pengguna mengetiknya di chat pribadi
-          userPrompt = rawMessage.replace(/^(!joko|joko|!bot|!ai|@bot)\b\s*[:,-]?\s*/i, '').trim() || rawMessage;
-          console.log(`[Private Webhook] Dari ${senderName} (${senderNumber}): "${userPrompt}"`);
+          // STRICT TRIGGER (PENGAMAN CHAT PRIBADI):
+          // Di chat pribadi, Joko HANYA merespons jika diawali pemanggilan eksplisit:
+          // "Joko <pesan>", "!joko <pesan>", atau perintah slash resmi (/bantuan, /status, /jadwal, dll.)
+          // Jika Mas Andika sedang chatting dengan orang lain tanpa memanggil Joko,
+          // Joko WAJIB 100% diam dan mengabaikan pesan tersebut agar obrolan pribadi tetap aman dan privasi terjaga!
+          const isSlashCommand = /^\/(?:bantuan|help|status|jadwal|reset|baru|on|off|tidur|bangun)\b/i.test(rawMessage);
+          const privateTriggerMatch = rawMessage.match(/^(!joko|joko|!bot|!ai|@bot)\b\s*[:,-]?\s*(.*)/is);
+
+          if (!privateTriggerMatch && !isSlashCommand) {
+            // Obrolan pribadi biasa tanpa kata kunci Joko -> abaikan total!
+            return;
+          }
+
+          userPrompt = privateTriggerMatch ? (privateTriggerMatch[2]?.trim() || '') : rawMessage;
+          if (!userPrompt && privateTriggerMatch) {
+            const greeting = isOwner ? `Halo Mas Andika! Joko siaga di sini. Mau tanya atau minta bantuan apa nih?` : `Halo ${senderName}! Joko di sini. Mau tanya atau minta bantuan apa nih?`;
+            await sendWhatsApp(targetRecipient, greeting);
+            return;
+          }
+
+          console.log(`[Private Webhook] Dari ${isOwner ? 'Mas Andika' : senderName} (${senderNumber}): "${userPrompt}"`);
         }
 
         const lowerPrompt = userPrompt.toLowerCase();
@@ -859,18 +1235,21 @@ const server = http.createServer((req, res) => {
           } else {
             await sendWhatsApp(targetRecipient, `Halo Mas Andika! Joko siap membantu:
 
-*Tanya Jawab & Coding:*
-• Chat langsung untuk tanya-jawab, diskusi, atau minta buatkan skrip di laptop.
+*Cara Memanggil Joko (Pengaman Aktif):*
+• \`Joko <pertanyaan atau perintah>\`
+• Contoh: \`Joko tolong jelaskan arsitektur microservices\`
+• Contoh: \`Joko ingatkan saya 15 menit lagi untuk minum air\`
 
-*Kontrol Tidur / Bangun:*
-• *"Joko lu bisa tidur"* : Joko istirahat / off
-• *"Joko bantu dong"* : Joko bangun / on
+_🛡️ Proteksi Privasi Aktif:_ Joko hanya akan merespons jika diawali dengan kata *Joko* agar obrolan pribadi Mas Andika dengan dosen, teman, atau rekan tetap aman dan tidak pernah diganggu.
 
-*Pengingat & Cron Job:*
-• \`ingatkan saya 10 menit lagi untuk cek server\`
-• \`jadwalkan setiap hari jam 08:00 selamat pagi\`
-• \`/jadwal\` : Melihat daftar jadwal aktif
-• \`/baru\` : Reset sesi obrolan Joko`);
+*Kontrol Cepat:*
+• \`/off\` atau *"Joko tidur"* : Joko istirahat (Off)
+• \`/on\` atau *"Joko bangun"* : Joko siaga (On)
+
+*Fitur & Jadwal:*
+• \`/jadwal\` : Melihat daftar jadwal/pengingat aktif
+• \`/status\` : Cek status sistem & memori Joko
+• \`/baru\` : Reset sesi percakapan`);
           }
           return;
         }
@@ -888,6 +1267,15 @@ const server = http.createServer((req, res) => {
             statusText += `\n• Akses Anggota Grup: ${isGroupMembersAllowed(rawSender) ? '🟢 Terbuka untuk semua anggota' : '🔒 Khusus Mas Andika (Terkunci)'}`;
           }
           await sendWhatsApp(targetRecipient, statusText);
+          return;
+        }
+
+        // Respon Sapaan Cepat (Halo / Hai / P / Tes)
+        if (/^(?:halo|hai|hi|hey|helo|tes|test|p|ping|assalamu['a]?laikum)\b/i.test(lowerPrompt.trim())) {
+          const greeting = isOwner
+            ? `Halo Mas Andika! Joko siaga penuh di sini via koneksi langsung Baileys Multi-Device. 🚀\nAda yang bisa Joko bantu hari ini? ☕`
+            : `Halo ${senderName}! Joko di sini. Ada yang bisa saya bantu? 😊`;
+          await sendWhatsApp(targetRecipient, greeting);
           return;
         }
 
@@ -971,9 +1359,46 @@ const server = http.createServer((req, res) => {
         });
 
       } catch (err) {
-        console.error('[Webhook] Error payload:', err.message);
+        console.error('[Process Message Error]:', err.message);
       }
-    });
+}
+
+// Setup HTTP Server lokal (Status Health-Check & endpoint /test-send, diakses via SSH ke 127.0.0.1)
+const server = http.createServer(async (req, res) => {
+  if (req.method === 'GET' && req.url === '/test-send') {
+    try {
+      console.log('[Test Endpoint] 🧪 Menjalankan tes kirim pesan ke Mas Andika (6282163850914)...');
+      const bStatus = getBaileysStatus();
+      if (!bStatus.ready) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: 'Baileys belum terhubung ke WhatsApp' }));
+        return;
+      }
+      const testMsg = `🤖 [TES MANDIRI JOKO]: Halo Mas Andika! Jalur pengiriman WebSocket Baileys langsung dari server AWS EC2 SUKSES 100%! 🚀 Jam: ${new Date().toLocaleTimeString('id-ID')} WIB`;
+      const sendRes = await sendBaileysMessage('6282163850914', testMsg);
+      console.log('[Test Endpoint] ✅ Berhasil kirim pesan tes:', sendRes);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true, result: sendRes }));
+    } catch (err) {
+      console.error('[Test Endpoint] ❌ Gagal kirim pesan tes:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: false, error: err.message }));
+    }
+    return;
+  }
+
+  if (req.method === 'GET') {
+    const jokoState = getJokoState();
+    const bStatus = getBaileysStatus();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'active',
+      name: 'Joko (Personal AI Assistant)',
+      mode: jokoState.isAsleep ? 'SLEEP (Tidur)' : 'AWAKE (Aktif)',
+      baileys: bStatus.ready ? 'CONNECTED (Multi-Device Direct)' : 'WAITING_PAIRING',
+      port: PORT,
+      timestamp: new Date().toISOString()
+    }));
     return;
   }
 
@@ -989,8 +1414,37 @@ process.on('unhandledRejection', (reason) => {
   console.error('[Process Error] Unhandled rejection:', reason?.message || reason);
 });
 
-// Jalankan HTTP Server, Cron Engine, dan Cloudflare Tunnel
-server.listen(PORT, '0.0.0.0', async () => {
+// Helper pastikan job morning executive briefing terdaftar
+function ensureMorningBriefingJob() {
+  try {
+    const jobs = loadJobs();
+    if (!jobs.some(j => j.id === 'job_morning_briefing_andika')) {
+      jobs.push({
+        id: 'job_morning_briefing_andika',
+        title: 'Morning Executive Briefing Harian',
+        creator: '6282163850914',
+        creatorName: 'Mas Andika',
+        target: '6282163850914',
+        type: 'daily',
+        config: {
+          time: '07:00'
+        },
+        actionType: 'executive_briefing',
+        payload: 'Morning Executive Briefing Harian untuk Mas Andika',
+        createdAt: new Date().toISOString(),
+        lastRun: null,
+        totalRuns: 0
+      });
+      saveJobs(jobs);
+      console.log('[Executive Briefing] ☕ Jadwal briefing harian pukul 07:00 WIB otomatis terdaftar.');
+    }
+  } catch (err) {
+    console.error('[Executive Briefing] Gagal daftarkan job briefing:', err.message);
+  }
+}
+
+// Jalankan HTTP Server lokal, koneksi Baileys, dan Cron Engine
+server.listen(PORT, '127.0.0.1', async () => {
   loadGroupHistory();
   startTJTracker();
   const curState = getJokoState();
@@ -998,15 +1452,52 @@ server.listen(PORT, '0.0.0.0', async () => {
   console.log(`🚀 Asisten WhatsApp "JOKO" aktif di port ${PORT}`);
   console.log(`📱 Owner Whitelist: ${Array.from(AUTHORIZED_TARGETS).join(', ')}`);
   console.log(`💤 Status Awal: ${curState.isAsleep ? 'TIDUR (Sleep Mode)' : 'BANGUN (Awake Mode)'}`);
+  const creds = getAntigravityCredentials();
+  if (creds) {
+    console.log(`🔌 Antigravity IDE: TERHUBUNG (${creds.address})`);
+  } else {
+    console.warn(`⚠️ Antigravity IDE: TIDAK TERDETEKSI (Pastikan aplikasi Antigravity IDE dibuka)`);
+  }
   console.log(`🗣️ Panggilan Nama: "Joko", "!joko", "Joko bantu dong", "Joko lu bisa tidur"`);
   console.log(`====================================================`);
 
-  // Sinkronkan daftar grup Fonnte saat startup
-  await syncFonnteGroups();
+  // Pastikan jadwal Morning Executive Briefing terdaftar di cron-jobs.json
+  ensureMorningBriefingJob();
+
+  // Mulai Koneksi Langsung WhatsApp Multi-Device via Baileys
+  try {
+    initBaileys({
+      ownerNumber: '6282163850914',
+      onMessage: async ({ rawMessage, targetRecipient, senderName, senderNumber, isGroup, isFromMe }) => {
+        await processIncomingMessage({
+          rawSender: targetRecipient,
+          rawMember: isGroup ? senderNumber : '',
+          rawDevice: '6282163850914',
+          rawMessage,
+          senderName,
+          senderNumber,
+          isFromMe
+        });
+      }
+    });
+  } catch (bErr) {
+    console.error('[Baileys Startup] Error:', bErr.message);
+  }
 
   // Mulai Engine Cron Scheduler
   startCronScheduler(async (job) => {
     console.log(`[Cron Trigger] ⏰ Menjalankan jadwal "${job.title}" (${job.id}) ke ${job.target}`);
+
+    if (job.actionType === 'executive_briefing') {
+      console.log(`[Cron Trigger] ☕ Menjalankan jadwal Morning Executive Briefing ke ${job.target}`);
+      try {
+        const briefing = await generateExecutiveBriefing();
+        await sendWhatsApp(job.target, briefing.text);
+      } catch (err) {
+        console.error(`[Cron Trigger] Error executive briefing:`, err.message);
+      }
+      return;
+    }
 
     if (job.actionType === 'ai_prompt') {
       try {
@@ -1037,111 +1528,25 @@ server.listen(PORT, '0.0.0.0', async () => {
           text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Udah waktunya buat minum air putih nih biar tetap segar dan terhidrasi! 💧✨`;
         }
       } else if (/rapat|meeting|zoom|briefing/i.test(lower)) {
-        text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Pengingat untuk:\n👉 *${job.payload}*\n\nYuk siap-siap meeting-nya! 💼✨`;
+        if (isGroupTarget) {
+          text = `⏰ *Colekan dari Joko!*\n\nHalo teman-teman dan ${displayName}! Pengingat untuk:\n👉 *${job.payload}*\n\nYuk siap-siap meeting-nya! 💼✨`;
+        } else {
+          text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Pengingat untuk:\n👉 *${job.payload}*\n\nYuk siap-siap meeting-nya! 💼✨`;
+        }
       } else {
-        text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Udah waktunya untuk:\n👉 *${job.payload}*\n\n_Semoga urusannya lancar ya!_ ✨`;
+        if (isGroupTarget) {
+          text = `⏰ *Colekan dari Joko!*\n\nHalo teman-teman dan ${displayName}! Udah waktunya untuk:\n👉 *${job.payload}*\n\n_Semoga urusannya lancar ya!_ ✨`;
+        } else {
+          text = `⏰ *Colekan dari Joko!*\n\nHalo ${displayName}! Udah waktunya untuk:\n👉 *${job.payload}*\n\n_Semoga urusannya lancar ya!_ ✨`;
+        }
       }
 
       await sendWhatsApp(job.target, text);
     }
   });
 
-  // Background Transcript Safety Net
-  // Memantau jika ada pesan MODEL yang muncul di transcript di luar webhook aktif
-  function startTranscriptWatcher() {
-    const session = getSavedSession();
-    if (session) {
-      const steps = readTranscript(session);
-      if (steps.length > 0) {
-        lastSeenStepIndex = steps[steps.length - 1].step_index;
-      }
-    }
 
-    setInterval(async () => {
-      if (isProcessing) return;
-      const session = getSavedSession();
-      if (!session) return;
 
-      try {
-        const steps = readTranscript(session);
-        if (!steps || steps.length === 0) return;
-
-        const unseen = steps.filter(s => typeof s.step_index === 'number' && s.step_index > lastSeenStepIndex);
-        if (unseen.length === 0) return;
-
-        for (const step of unseen) {
-          if (typeof step.step_index === 'number' && step.step_index > lastSeenStepIndex) {
-            lastSeenStepIndex = step.step_index;
-          }
-
-          if (
-            step.source === 'MODEL' &&
-            step.type === 'PLANNER_RESPONSE' &&
-            step.status === 'DONE' &&
-            step.content &&
-            typeof step.content === 'string' &&
-            step.content.trim().length > 0 &&
-            (!step.tool_calls || step.tool_calls.length === 0)
-          ) {
-            const content = cleanHumanResponse(step.content);
-            if (content && !isOurOwnMessage(content)) {
-              const target = lastTargetRecipient || Array.from(AUTHORIZED_TARGETS)[0];
-              console.log(`[Transcript Watcher] 🔔 Menangkap pesan asinkron tak terduga (step ${step.step_index}), meneruskan ke ${target}...`);
-              await sendWhatsApp(target, content);
-            }
-          }
-        }
-      } catch (err) {
-        // Abaikan error pembacaan transcript
-      }
-    }, 5000);
-  }
-
-  startTranscriptWatcher();
-
-  // Mulai Cloudflare Tunnel dengan fitur Auto-Reconnect
-  let activeTunnel = null;
-  let isShuttingDown = false;
-
-  function startTunnel() {
-    if (isShuttingDown || !fs.existsSync(CLOUDFLARED_PATH)) {
-      if (!fs.existsSync(CLOUDFLARED_PATH)) {
-        console.warn(`[Tunnel] ⚠️ cloudflared.exe tidak ditemukan di ${CLOUDFLARED_PATH}.`);
-      }
-      return;
-    }
-
-    console.log('[Tunnel] Memulai Cloudflare Tunnel...');
-    activeTunnel = spawn(CLOUDFLARED_PATH, ['tunnel', '--url', `http://127.0.0.1:${PORT}`]);
-    let tunnelRegistered = false;
-
-    activeTunnel.stderr.on('data', async data => {
-      const text = data.toString();
-      const match = text.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/i);
-      if (match && !tunnelRegistered) {
-        tunnelRegistered = true;
-        const tunnelUrl = match[0];
-        console.log(`\n🎉 TUNNEL URL BERHASIL DIBUAT: ${tunnelUrl}\n`);
-        await updateFonnteWebhook(tunnelUrl);
-      }
-    });
-
-    activeTunnel.on('close', code => {
-      console.log(`[Tunnel] Cloudflare tunnel berhenti dengan kode ${code}.`);
-      if (!isShuttingDown) {
-        console.log('[Tunnel] Memulai ulang tunnel dalam 3 detik...');
-        setTimeout(startTunnel, 3000);
-      }
-    });
-  }
-
-  startTunnel();
-
-  const cleanup = () => {
-    isShuttingDown = true;
-    try { if (activeTunnel) activeTunnel.kill(); } catch {}
-  };
-
-  process.on('SIGINT', () => { cleanup(); process.exit(); });
-  process.on('SIGTERM', () => { cleanup(); process.exit(); });
+  process.on('SIGINT', () => process.exit());
+  process.on('SIGTERM', () => process.exit());
 });
