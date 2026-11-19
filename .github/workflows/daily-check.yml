@@ -1,10 +1,10 @@
 name: Daily System & Log Health Check
 
 on:
-  schedule:
-    # Berjalan setiap hari pukul 08:00 WIB (01:00 UTC)
-    - cron: '0 1 * * *'
-  workflow_dispatch: # Memungkinkan tombol "Run workflow" manual di GitHub
+  # Jadwal harian dinonaktifkan: runner GitHub tidak bisa menjangkau Joko (berjalan di
+  # EC2/laptop pada 127.0.0.1), sehingga hasilnya selalu "PERLU PERHATIAN" palsu.
+  # Pemeriksaan nyata: jalankan `node check-logs.mjs` di server Joko.
+  workflow_dispatch: # Tetap bisa dijalankan manual lewat tombol "Run workflow"
 
 permissions:
   contents: write

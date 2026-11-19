@@ -33,7 +33,8 @@ export async function getTJToken() {
     const res = await fetch(`${TJ_API_BASE}/auth/login/guest`, {
       method: 'POST',
       headers: TJ_HEADERS,
-      body: JSON.stringify({ device_id: 'tj-joko-assistant' })
+      body: JSON.stringify({ device_id: 'tj-joko-assistant' }),
+      signal: AbortSignal.timeout(10000)
     });
     const data = await res.json();
     if (data.token) {
@@ -71,7 +72,8 @@ export async function getRouteDetail(routeId) {
 
   try {
     const res = await fetch(`${TJ_API_BASE}/route/${encodeURIComponent(id)}`, {
-      headers: { ...TJ_HEADERS, 'Authorization': `Bearer ${token}` }
+      headers: { ...TJ_HEADERS, 'Authorization': `Bearer ${token}` },
+      signal: AbortSignal.timeout(10000)
     });
     const result = await res.json();
     if (result.code === 200 && result.data) {
@@ -150,6 +152,15 @@ export function startTJTracker() {
       }
     }
   }, 120000);
+}
+
+/** Ringkasan status radar live (dipakai briefing pagi). */
+export function getTrackerStatus() {
+  return {
+    connected: isConnected,
+    activeBuses: liveBuses.size,
+    activeRoutes: new Set([...liveBuses.values()].map(b => String(b.route_code || '').toUpperCase())).size
+  };
 }
 
 // Ambil semua armada live untuk suatu rute (misal '10H', '1', '9', dll)

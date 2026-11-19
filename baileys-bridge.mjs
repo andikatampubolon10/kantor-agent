@@ -18,6 +18,9 @@ let proto = null;
 
 let sock = null;
 let isConnecting = false;
+// Status koneksi NYATA dari event connection.update. sock.user tetap terisi walau
+// koneksi putus (diambil dari kredensial), jadi tidak bisa dipakai sebagai tanda "siap".
+let isOpen = false;
 let messageHandler = null;
 const sentMessageIds = new Set();
 const processedIncomingMessageIds = new Set();
@@ -107,7 +110,8 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
       ? Browsers.ubuntu('Chrome')
       : ['Ubuntu', 'Chrome', '22.04.4'];
 
-    sock = makeWASocket({
+    isOpen = false;
+    const thisSock = makeWASocket({
       version,
       auth: state,
       logger: pino({ level: 'silent' }), // Heningkan log verbose internal pino
@@ -124,6 +128,7 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
         return proto?.Message?.fromObject({}) || undefined;
       }
     });
+    sock = thisSock;
 
     sock.ev.on('creds.update', saveCreds);
 
@@ -178,8 +183,12 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
         } catch {}
       }
 
+      // Abaikan event dari socket lama yang sudah digantikan
+      if (thisSock !== sock) return;
+
       if (connection === 'close') {
         isConnecting = false;
+        isOpen = false;
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason?.loggedOut;
 
@@ -197,6 +206,7 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
         }
       } else if (connection === 'open') {
         isConnecting = false;
+        isOpen = true;
         console.log('====================================================');
         console.log('🚀 Asisten WhatsApp JOKO AKTIF & TERHUBUNG VIA BAILEYS!');
         console.log(`📱 Nomor Tersambung: ${sock.user?.id?.split(':')[0] || 'Unknown'}`);
@@ -260,7 +270,8 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
           senderJid = myJid;
         }
 
-        const senderNumber = senderJid ? senderJid.replace(/[^0-9]/g, '') : '6282163850914';
+        // Jangan pernah jatuh ke nomor owner: pengirim tak dikenal harus tetap tak dikenal.
+        const senderNumber = senderJid ? senderJid.replace(/[^0-9]/g, '') : '';
         const senderName = m.pushName || (m.key.fromMe ? 'Mas Andika' : (isGroup ? 'Anggota Grup' : 'Pengguna'));
 
         // Gunakan normalizeMessageContent resmi Baileys untuk unwrap seluruh layer pembungkus
@@ -323,7 +334,7 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
  * @param {string} messageText Teks pesan
  */
 export async function sendBaileysMessage(recipient, messageText) {
-  if (!sock) {
+  if (!sock || !isOpen) {
     throw new Error('Koneksi WhatsApp Baileys belum siap.');
   }
 
@@ -333,7 +344,25 @@ export async function sendBaileysMessage(recipient, messageText) {
   }
 
   console.log(`[Baileys Outbox] 📤 Mengirim ke ${jid} (${messageText.length} karakter)...`);
-  const sent = await sock.sendMessage(jid, { text: messageText });
+
+  // Daftarkan ID pesan SEBELUM dikirim. Balasan Joko terkirim dari akun Mas Andika
+  // (fromMe = owner), dan Baileys memancarkan event upsert untuk pesan keluar sebelum
+  // sendMessage() selesai. Tanpa pra-registrasi, balasan Joko bisa terbaca sebagai
+  // perintah owner baru. (sendMessage meneruskan options.messageId ke generateWAMessage.)
+  let preId = null;
+  try {
+    preId = typeof baileysModule?.generateMessageIDV2 === 'function'
+      ? baileysModule.generateMessageIDV2(sock.user?.id)
+      : (typeof baileysModule?.generateMessageID === 'function' ? baileysModule.generateMessageID() : null);
+  } catch {
+    preId = null;
+  }
+  if (preId) {
+    sentMessageIds.add(preId);
+    setTimeout(() => sentMessageIds.delete(preId), 300000);
+  }
+
+  const sent = await sock.sendMessage(jid, { text: messageText }, preId ? { messageId: preId } : undefined);
   if (sent?.key?.id) {
     if (sent.message) {
       storeMessage(sent.key.id, sent.message);
@@ -349,7 +378,7 @@ export async function sendBaileysMessage(recipient, messageText) {
  */
 export function getBaileysStatus() {
   return {
-    ready: !!(sock && sock.user),
+    ready: !!(sock && isOpen && sock.user),
     user: sock?.user || null,
     isConnecting
   };

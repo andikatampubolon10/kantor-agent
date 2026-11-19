@@ -31,3 +31,8 @@ threads-profile.tar.gz
 baileys_auth_info/
 pairing-code.txt
 baileys-qr.png
+# file sementara / cadangan otomatis Joko
+*.tmp-*
+*.corrupt-*
+threads-debug-*.png
+wa-qr.txt

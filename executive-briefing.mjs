@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { searchAndScrapeTopic } from './web-intelligence.mjs';
 import { loadJobs, getWIBDate } from './cron-manager.mjs';
+import { getTrackerStatus } from './tj-tracker.mjs';
 
 const DRAFT_THREAD_FILE = path.join(process.cwd(), '.latest-briefing-draft.txt');
 
@@ -38,13 +39,17 @@ export async function fetchJakartaWeather() {
   } catch (err) {
     console.warn('[Executive Briefing] Weather fetch fallback:', err.message);
   }
-  return {
-    success: false,
-    temperature: '28°C - 32°C',
-    humidity: '75%',
-    description: 'Cerah Berawan khas Jakarta ⛅'
-  };
+  // Jangan pernah menampilkan angka karangan sebagai data cuaca nyata.
+  return { success: false, temperature: null, humidity: null, description: null };
 }
+
+// Variasi penutup draft Threads agar tidak identik setiap hari.
+const DRAFT_TEMPLATES = [
+  (topic) => `Pagi ini dunia tech lagi ramai soal "${topic}".\n\nPelajaran pentingnya: AI sekarang bukan lagi soal seberapa pintar dia menjawab, tapi seberapa andal dia mengambil tindakan nyata.\n\nAutomate what's repetitive, focus on what creates leverage. Keep building! 🤖⚡`,
+  (topic) => `Lagi baca soal "${topic}" pagi ini.\n\nMakin kelihatan: keunggulan bukan di siapa yang punya model paling canggih, tapi siapa yang paling cepat mengubahnya jadi alur kerja yang beneran dipakai.\n\nKalian sudah otomatisasi apa minggu ini? 🚀`,
+  (topic) => `"${topic}" jadi bahasan hangat hari ini.\n\nCatatan kecil buat diri sendiri: mulai dari masalah kecil yang berulang, otomatisasi, ukur hasilnya, baru naik level.\n\nProgress > perfection. Semangat! 💪🤖`,
+  (topic) => `Kabar pagi: "${topic}".\n\nTeknologi bergerak cepat, tapi yang bikin beda tetap konsistensi belajar dan berani nyoba langsung.\n\nSatu eksperimen kecil hari ini lebih berharga dari seribu rencana. ⚡`
+];
 
 // Simpan dan ambil draft konten Threads terbaru
 export function saveLatestDraftThread(content) {
@@ -66,24 +71,8 @@ export function getLatestDraftThread() {
   return null;
 }
 
-// Deteksi perintah minta briefing langsung dari chat
-export function isBriefingCommand(text) {
-  const t = text.toLowerCase().trim();
-  return (
-    /^(?:!joko\s+|joko\s*[:,-]?\s*)?(?:briefing|executive\s*briefing|morning\s*briefing|laporan\s*pagi|kabar\s*pagi|info\s*pagi)/i.test(t) ||
-    /^(?:!joko\s+|joko\s*[:,-]?\s*)?(?:kirim\s*(?:kan\s*)?)?(?:morning\s*)?briefing/i.test(t) ||
-    /(?:briefing\s+(?:pagi|hari\s+ini)|rangkum\s+(?:kondisi\s+)?pagi|laporan\s+harian|morning\s+briefing)/i.test(t)
-  );
-}
-
-// Deteksi perintah posting draft Threads hasil briefing
-export function isPostDraftThreadCommand(text) {
-  const t = text.toLowerCase().trim();
-  return (
-    /(?:posting|upload|unggah|gas|post)\s+(?:draft\s+)?threads(?:\s+(?:tadi|terbaru|ini))?/i.test(t) ||
-    /(?:gas\s+posting|langsung\s+upload|postingkan\s+draft)/i.test(t)
-  );
-}
+// Catatan: deteksi perintah briefing / posting draft ada di message-guard.mjs
+// (hanya dicocokkan setelah pemanggilan eksplisit "Joko ...").
 
 // Generator Executive Briefing Harian Terpadu
 export async function generateExecutiveBriefing() {
@@ -101,7 +90,8 @@ export async function generateExecutiveBriefing() {
   // 2. Berita & Tren AI Terhangat via Web Intelligence
   let newsItems = [];
   try {
-    const newsRes = await searchAndScrapeTopic('Artificial Intelligence OR Agentic AI', 3);
+    // Briefing hanya butuh judul + tautan: ambil dari RSS saja tanpa membuka browser (cepat & ringan).
+    const newsRes = await searchAndScrapeTopic('Artificial Intelligence OR Agentic AI', 3, { scrape: false });
     if (newsRes.success && newsRes.articles.length > 0) {
       newsItems = newsRes.articles.slice(0, 3);
     }
@@ -127,7 +117,9 @@ export async function generateExecutiveBriefing() {
   if (newsItems.length > 0) {
     threadsTopic = newsItems[0].title.replace(/ - [^-]+$/, '').trim();
   }
-  const draftThread = `Pagi ini dunia tech lagi ramai soal "${threadsTopic}".\n\nPelajaran pentingnya: AI sekarang bukan lagi soal seberapa pintar dia jawab pertanyaan, tapi seberapa andal dia mengambil tindakan nyata tanpa nunggu disuapin.\n\nAutomate what's repetitive, focus on what creates leverage. Semangat & keep building! 🤖⚡`;
+  const dayOfYear = Math.floor((wib - new Date(wib.getFullYear(), 0, 0)) / 86400000);
+  let draftThread = DRAFT_TEMPLATES[dayOfYear % DRAFT_TEMPLATES.length](threadsTopic.slice(0, 140));
+  if (draftThread.length > 480) draftThread = draftThread.slice(0, 477) + '...';
   
   // Simpan draft agar siap diunggah saat Mas Andika bilang "gas posting!"
   saveLatestDraftThread(draftThread);
@@ -137,15 +129,24 @@ export async function generateExecutiveBriefing() {
   briefing += `Selamat pagi Mas Andika! Joko sudah siapkan rangkuman intelijen harian untuk mengawali hari Mas dengan segar:\n\n`;
 
   briefing += `🌤️ *Cuaca & Kondisi Jakarta:*\n`;
-  briefing += `• Suhu: ${weather.temperature} | Kelembaban: ${weather.humidity}\n`;
-  briefing += `• Kondisi: ${weather.description}\n`;
-  briefing += `• Komuter: Koridor Transjakarta utama terpantau beroperasi normal.\n\n`;
+  if (weather.success) {
+    briefing += `• Suhu: ${weather.temperature} | Kelembaban: ${weather.humidity}\n`;
+    briefing += `• Kondisi: ${weather.description}\n`;
+  } else {
+    briefing += `• Data cuaca sedang tidak tersedia pagi ini.\n`;
+  }
+  const tj = getTrackerStatus();
+  if (tj.connected && tj.activeBuses > 0) {
+    briefing += `• Komuter: Radar live Transjakarta aktif — ${tj.activeBuses} armada terpantau di ${tj.activeRoutes} rute. Tanya "Joko bus koridor X dari halte Y" untuk ETA.\n\n`;
+  } else {
+    briefing += `• Komuter: Data live Transjakarta sedang tidak tersedia.\n\n`;
+  }
 
   briefing += `🌐 *Top 3 Tren AI & Teknologi Pagi Ini:*\n`;
   if (newsItems.length > 0) {
     newsItems.forEach((item, idx) => {
       const cleanTitle = item.title.replace(/ - [^-]+$/, '').trim();
-      briefing += `${idx + 1}. *${cleanTitle}*\n   🔗 _${item.link}_\n`;
+      briefing += `${idx + 1}. *${cleanTitle}*${item.source ? ` (${item.source})` : ''}\n   🔗 ${item.url}\n`;
     });
   } else {
     briefing += `• Perkembangan Agen AI mandiri di industri teknologi semakin pesat.\n• Akselerasi integrasi model multimodal untuk otomasi harian.\n• Tren browser agent untuk social media operations mandiri.\n`;

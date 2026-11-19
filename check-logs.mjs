@@ -15,31 +15,42 @@ const results = {
   warnings: []
 };
 
-// 1. Periksa Status Server Kantor Agent
-try {
-  const res = await fetch('http://127.0.0.1:8788/kerja/api/ping', { signal: AbortSignal.timeout(3000) });
-  if (res.ok) {
-    const data = await res.json();
-    results.summary.push(`✅ Server Kantor Agent: Aktif (${data.runtime || 'node'} pada port 8788)`);
-  } else {
-    results.healthy = false;
-    results.errors.push(`❌ Server Kantor Agent mengembalikan status HTTP ${res.status}`);
-  }
-} catch (err) {
-  results.healthy = false;
-  results.errors.push(`❌ Server Kantor Agent tidak dapat dihubungi: ${err.message}`);
-}
+// Pemeriksaan layanan hanya bermakna bila skrip dijalankan DI MESIN tempat Joko berjalan
+// (laptop / EC2). Di runner GitHub Actions tidak ada layanan lokal yang bisa dicek.
+const isCI = process.env.GITHUB_ACTIONS === 'true' || process.env.CI === 'true';
+const JOKO_PORT = process.env.PORT || '8795';
 
-// 2. Periksa Status Dashboard State
-try {
-  const res = await fetch('http://127.0.0.1:8788/kerja/api/state', { signal: AbortSignal.timeout(3000) });
-  if (res.ok) {
-    const state = await res.json();
-    const busyTeam = state.team.filter(t => t.state === 'bekerja').length;
-    results.summary.push(`✅ Status Kantor 3D: Ketua (${state.ketua?.name || 'Joko'}: ${state.ketua?.state || 'santai'}), Anggota tim bekerja: ${busyTeam}, Freelancer: ${state.freelancers?.length || 0}`);
+if (isCI) {
+  results.summary.push('ℹ️ Dijalankan di CI: pemeriksaan layanan lokal (Joko & Kantor) dilewati. Jalankan `node check-logs.mjs` di server Joko untuk cek nyata.');
+} else {
+  // 1. Periksa Joko (asisten WhatsApp) — layanan utama
+  try {
+    const res = await fetch(`http://127.0.0.1:${JOKO_PORT}/`, { signal: AbortSignal.timeout(3000) });
+    const data = await res.json();
+    results.summary.push(`✅ Joko aktif di port ${JOKO_PORT} — mode: ${data.mode || '-'}`);
+    if (data.baileys && !/CONNECTED/i.test(data.baileys)) {
+      results.healthy = false;
+      results.errors.push(`❌ WhatsApp Joko belum terhubung (status: ${data.baileys}). Cek pairing Baileys.`);
+    } else if (data.baileys) {
+      results.summary.push(`✅ WhatsApp Joko: ${data.baileys}`);
+    }
+  } catch (err) {
+    results.healthy = false;
+    results.errors.push(`❌ Joko tidak dapat dihubungi di port ${JOKO_PORT}: ${err.message}`);
   }
-} catch {
-  // Sudah tertangkap di ping
+
+  // 2. Periksa Server Kantor Agent (opsional — dashboard 3D, hanya peringatan)
+  try {
+    const res = await fetch('http://127.0.0.1:8788/kerja/api/ping', { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const data = await res.json();
+      results.summary.push(`✅ Server Kantor Agent: Aktif (${data.runtime || 'node'} pada port 8788)`);
+    } else {
+      results.warnings.push(`Server Kantor Agent mengembalikan status HTTP ${res.status}`);
+    }
+  } catch {
+    results.summary.push('ℹ️ Server Kantor Agent (dashboard 3D) tidak berjalan — opsional.');
+  }
 }
 
 // 3. Periksa file log di direktori task / cache
@@ -89,7 +100,7 @@ for (const logPath of recentLogs) {
 // 4. Susun Laporan Markdown
 const reportMarkdown = `# Laporan Pemeriksaan Log Harian
 **Waktu Pemeriksaan:** ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB  
-**Status Keseluruhan:** ${results.healthy && results.errors.length === 0 ? '🟢 SEHAT (HEALTHY)' : '🔴 PERLU PERHATIAN'}
+**Status Keseluruhan:** ${isCI ? '⚪ DILEWATI (dijalankan di CI, bukan di server Joko)' : (results.healthy && results.errors.length === 0 ? '🟢 SEHAT (HEALTHY)' : '🔴 PERLU PERHATIAN')}
 
 ## Ringkasan Layanan
 ${results.summary.map(s => `- ${s}`).join('\n')}

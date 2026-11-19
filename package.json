@@ -2,6 +2,9 @@
   "name": "kantor-agent",
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "test": "node --test tests/message-guard.test.mjs tests/cron-manager.test.mjs tests/url-guard.test.mjs tests/agent-queue.test.mjs tests/agy-cli.test.mjs"
+  },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.9",
     "mqtt": "^5.16.1",

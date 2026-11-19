@@ -6,33 +6,7 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import puppeteer from 'puppeteer-core';
-
-function getChromePath() {
-  if (process.platform === 'win32') {
-    const candidates = [
-      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-      path.join(process.env.LOCALAPPDATA || '', 'Google\\Chrome\\Application\\chrome.exe')
-    ];
-    for (const p of candidates) {
-      if (fs.existsSync(p)) return p;
-    }
-    return candidates[0];
-  }
-
-  // Linux EC2 candidates
-  const linuxCandidates = [
-    '/snap/bin/chromium',
-    '/usr/bin/chromium',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/google-chrome',
-    '/usr/bin/google-chrome-stable'
-  ];
-  for (const p of linuxCandidates) {
-    if (fs.existsSync(p)) return p;
-  }
-  return '/snap/bin/chromium';
-}
+import { getChromePath, hasDisplay, createMutex } from './browser-utils.mjs';
 
 const CHROME_PATH = getChromePath();
 const USER_DATA_DIR = path.join(process.cwd(), '.chrome-threads-profile');
@@ -53,23 +27,72 @@ if (!fs.existsSync(USER_DATA_DIR)) {
   fs.mkdirSync(USER_DATA_DIR, { recursive: true });
 }
 
+// Chrome mengunci userDataDir: semua pemakaian profil Threads dijalankan bergiliran.
+const runWithThreadsProfile = createMutex();
+const LOGIN_WINDOW_MAX_MS = 10 * 60 * 1000;
+let loginSessionActive = false;
+
 /**
- * Buka browser Chrome terlihat (GUI) agar Mas Andika bisa login sekali ke Threads
+ * Buka browser Chrome terlihat (GUI) agar Mas Andika bisa login sekali ke Threads.
+ * Jendela otomatis ditutup begitu login terdeteksi (cookie sessionid) atau setelah
+ * 10 menit, supaya profil tidak terkunci selamanya dan posting berikutnya tidak gagal.
+ * Fungsi ini tidak menunggu proses login selesai.
  */
 export async function openThreadsLogin() {
-  console.log('[Threads Operator] Membuka Chrome untuk login akun Threads...');
-  const browser = await puppeteer.launch({
-    executablePath: CHROME_PATH,
-    headless: false,
-    userDataDir: USER_DATA_DIR,
-    defaultViewport: null,
-    args: ['--start-maximized', '--no-sandbox', '--disable-setuid-sandbox']
-  });
+  if (!hasDisplay()) {
+    throw new Error('Server ini tidak punya layar (headless). Gunakan perintah "Joko session threads <sessionid>" untuk login di server.');
+  }
+  if (loginSessionActive) {
+    return { success: true, message: 'Jendela login Threads sudah terbuka.' };
+  }
+  loginSessionActive = true;
 
-  const page = (await browser.pages())[0] || (await browser.newPage());
-  await page.goto('https://www.threads.net/login', { waitUntil: 'networkidle2' });
-  console.log('[Threads Operator] Silakan login di jendela Chrome yang terbuka. Sesi akan tersimpan otomatis!');
+  runWithThreadsProfile(async () => {
+    console.log('[Threads Operator] Membuka Chrome untuk login akun Threads...');
+    let browser = null;
+    try {
+      browser = await puppeteer.launch({
+        executablePath: CHROME_PATH,
+        headless: false,
+        userDataDir: USER_DATA_DIR,
+        defaultViewport: null,
+        args: ['--start-maximized']
+      });
+      const page = (await browser.pages())[0] || (await browser.newPage());
+      await page.goto('https://www.threads.net/login', { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => {});
+      console.log('[Threads Operator] Silakan login di jendela Chrome yang terbuka (maks. 10 menit).');
+
+      const deadline = Date.now() + LOGIN_WINDOW_MAX_MS;
+      while (Date.now() < deadline && browser.connected) {
+        await new Promise(r => setTimeout(r, 5000));
+        const cookies = await (typeof browser.cookies === 'function'
+          ? browser.cookies()
+          : page.cookies('https://www.threads.net')).catch(() => []);
+        if (cookies.some(c => c.name === 'sessionid' && c.value && /threads\.(net|com)$/i.test(String(c.domain || '').replace(/^\./, '')))) {
+          console.log('[Threads Operator] ✅ Login Threads terdeteksi. Menyimpan sesi dan menutup browser...');
+          await new Promise(r => setTimeout(r, 3000));
+          break;
+        }
+      }
+    } catch (err) {
+      console.error('[Threads Operator] Error sesi login:', err.message);
+    } finally {
+      if (browser) await browser.close().catch(() => {});
+      loginSessionActive = false;
+    }
+  }).catch(() => { loginSessionActive = false; });
+
   return { success: true, message: 'Browser login Threads telah dibuka.' };
+}
+
+/** Cek apakah browser sudah dalam kondisi login di Threads. */
+export function checkThreadsLogin() {
+  return runWithThreadsProfile(() => checkThreadsLoginUnlocked());
+}
+
+/** Posting ke Threads (bergiliran dengan pemakaian profil lain). */
+export function postToThreads(content) {
+  return runWithThreadsProfile(() => postToThreadsUnlocked(content));
 }
 
 export function saveSessionIdCookie(sessionid) {
@@ -136,7 +159,7 @@ async function injectSavedCookies(page) {
 /**
  * Cek apakah browser sudah dalam kondisi login di Threads
  */
-export async function checkThreadsLogin() {
+async function checkThreadsLoginUnlocked() {
   let browser = null;
   try {
     browser = await puppeteer.launch({
@@ -170,7 +193,7 @@ export async function checkThreadsLogin() {
  * Otomatisasi posting konten ke Threads dengan verifikasi ketat
  * @param {string} content Teks utas / postingan
  */
-export async function postToThreads(content) {
+async function postToThreadsUnlocked(content) {
   if (!content || !content.trim()) {
     throw new Error('Konten thread tidak boleh kosong.');
   }
