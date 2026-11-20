@@ -6,6 +6,7 @@ node_modules/
 cloudflared.exe
 .wa-assistant-session.json
 .joko-state.json
+.joko-memory.json
 .group-history.json
 .group-access.json
 .personal-access.json

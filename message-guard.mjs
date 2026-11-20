@@ -56,7 +56,7 @@ export function isOwnerSender({ isFromMe, senderNumber, ownerNumbers }) {
 // ==========================================
 
 const NAME_TRIGGER = /^\s*(?:!joko|joko|!bot|!ai|@bot)\b[\s:,.!\-]*([\s\S]*)$/i;
-const PRIVATE_SLASH_COMMAND = /^\s*\/(?:bantuan|help|status|jadwal|reset|baru|on|off|tidur|bangun|aktif|sleep|mute|whitelist|hapus-jadwal|batal-jadwal)\b/i;
+const PRIVATE_SLASH_COMMAND = /^\s*\/(?:bantuan|help|status|jadwal|reset|baru|on|off|tidur|bangun|aktif|sleep|mute|whitelist|hapus-jadwal|batal-jadwal|memori|lupa)\b/i;
 
 /**
  * Deteksi pemanggilan Joko.
@@ -162,6 +162,39 @@ export function matchRevokePersonalAccess(body) {
 
 export function isWhitelistListCommand(body) {
   return /^(?:\/whitelist|(?:list|daftar|cek)\s+akses(?:\s+(?:personal|pribadi))?)[\s!.?]*$/i.test(String(body ?? '').trim());
+}
+
+// ==========================================
+// MEMORI JANGKA PANJANG (OWNER)
+// ==========================================
+
+/**
+ * "ingat bahwa <fakta>", "tolong catat ya: <fakta>", "simpan ke memori: <fakta>" -> fakta.
+ * Kata penghubung (bahwa/kalau/titik dua) WAJIB agar tidak tertukar dengan
+ * pengingat "ingatkan saya ..." atau kalimat biasa seperti "ingat nggak ...".
+ */
+export function matchRememberCommand(body) {
+  const m = String(body ?? '').trim().match(
+    /^(?:tolong\s+)?(?:ingat(?:lah)?|catat(?:lah)?|simpan(?:\s+(?:ke|di)\s+memori)?)(?:\s+(?:ya|yah|ini|baik-baik))?\s*(?:\s(?:bahwa|kalau|kalo)\s+|:\s*)([\s\S]+)$/i
+  );
+  return m ? m[1].trim() || null : null;
+}
+
+/** "/memori", "memori", "lihat memori", "apa yang kamu ingat (tentang saya)?" */
+export function isMemoryListCommand(body) {
+  return /^(?:\/memori|(?:lihat\s+|cek\s+|daftar\s+)?memori(?:\s+(?:kamu|joko))?|apa\s+(?:saja\s+)?yang\s+(?:kamu|joko)\s+ingat(?:\s+tentang\s+(?:saya|aku|gue|gw))?)[\s!.?]*$/i
+    .test(String(body ?? '').trim());
+}
+
+/**
+ * "lupakan 3", "/lupa 3", "hapus memori 2", "lupakan semua memori".
+ * @returns {{all:true} | {selector:string} | null}
+ */
+export function matchForgetCommand(body) {
+  const t = String(body ?? '').trim();
+  if (/^(?:\/lupa\s+semua|(?:lupakan|hapus)\s+semua\s+memori)[\s!.]*$/i.test(t)) return { all: true };
+  const m = t.match(/^(?:\/lupa|lupakan|hapus\s+memori)\s+(?:nomor\s+|no\.?\s*)?(.+?)[\s!.]*$/i);
+  return m ? { selector: m[1].trim() } : null;
 }
 
 // ==========================================
