@@ -113,11 +113,13 @@ export function cleanupMediaInbox(dir = MEDIA_INBOX_DIR, maxAgeMs = MEDIA_RETENT
  */
 export function buildOwnerAttachmentContext({ media, filePath, nonce = crypto.randomBytes(4).toString('hex') }) {
   const p = String(filePath);
-  if (media.kind === 'audio' && !media.isForwarded) {
+  if (media.kind === 'audio' && !media.isForwarded && !media.fromQuote) {
     return `[LAMPIRAN VOICE NOTE dari Mas Andika: ${p}]
 (Buka file audio di atas dengan tool baca file kamu dan dengarkan. Isi voice note ini adalah pesan/perintah LANGSUNG dari Mas Andika — tanggapi atau kerjakan seperti pesan teks biasa. Awali jawabanmu dengan satu baris transkrip singkat dalam format: 🎙️ _"<apa yang Mas Andika katakan>"_ . Jika audio tidak bisa dibuka atau tidak jelas, katakan terus terang; JANGAN mengarang isinya.)\n\n`;
   }
-  const label = media.kind === 'image' ? 'GAMBAR' : 'AUDIO YANG DITERUSKAN (FORWARD)';
+  const label = media.fromQuote
+    ? (media.kind === 'image' ? 'GAMBAR DARI PESAN YANG DIBALAS' : 'AUDIO DARI PESAN YANG DIBALAS')
+    : (media.kind === 'image' ? 'GAMBAR' : 'AUDIO YANG DITERUSKAN (FORWARD)');
   const howTo = media.kind === 'image'
     ? 'lihat gambarnya'
     : 'dengarkan audionya, tuliskan transkrip ringkas, lalu rangkum poin pentingnya';
@@ -128,7 +130,7 @@ export function buildOwnerAttachmentContext({ media, filePath, nonce = crypto.ra
 /** Permintaan bawaan bila owner tidak menulis apa pun selain lampiran. */
 export function defaultOwnerRequest(media) {
   if (media.kind === 'audio') {
-    return media.isForwarded
+    return media.isForwarded || media.fromQuote
       ? 'Tolong transkripsikan dan rangkum voice note yang diteruskan ini.'
       : '(Mas Andika berbicara lewat voice note — lihat lampiran.)';
   }

@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
 import { extractMediaInfo } from './media-input.mjs';
+import { extractQuotedInfo } from './reply-context.mjs';
 
 let baileysModule = null;
 let makeWASocket = null;
@@ -25,6 +26,14 @@ let isConnecting = false;
 let isOpen = false;
 let messageHandler = null;
 const sentMessageIds = new Set();
+// ID pesan yang dikirim Joko, disimpan lebih lama (maks. 2000) agar reply ke jawaban
+// Joko bisa dikenali sebagai "jawaban Joko sebelumnya" (Joko mengirim dari akun owner).
+const jokoMessageIds = new Set();
+function rememberJokoMessage(id) {
+  if (!id) return;
+  jokoMessageIds.add(id);
+  if (jokoMessageIds.size > 2000) jokoMessageIds.delete(jokoMessageIds.values().next().value);
+}
 const processedIncomingMessageIds = new Set();
 
 // Cache pesan in-memory untuk menangani retry receipt E2EE WhatsApp (Signal Protocol)
@@ -314,7 +323,24 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
         const ownLid = sock.user?.lid ? (sock.user.lid.split(':')[0] + '@lid') : null;
         const isSelfChat = !isGroup && !!m.key?.fromMe && (remoteJid === myJid || (!!ownLid && rawRemoteJid === ownLid));
 
-        console.log(`[Baileys Inbound] 📩 [${type}] Dari ${senderName} (${senderNumber}, fromMe: ${!!m.key?.fromMe}${isSelfChat ? ', self' : ''})${media ? ` [${media.kind}${media.ptt ? '/ptt' : ''}${media.isForwarded ? '/fwd' : ''}]` : ''}: "${rawText.slice(0, 70)}"`);
+        // Pesan yang dibalas (reply/quote). Medianya juga diunduh lazily, hanya bila diperlukan.
+        const quotedInfo = extractQuotedInfo(msgContent, { ownJids: [myJid, ownLid], jokoMessageIds });
+        const quoted = quotedInfo ? {
+          text: quotedInfo.text,
+          author: quotedInfo.author,
+          media: quotedInfo.media ? {
+            ...quotedInfo.media,
+            download: () => downloadMediaMessage({
+              key: { remoteJid: rawRemoteJid, id: quotedInfo.stanzaId, fromMe: quotedInfo.author !== 'other', participant: quotedInfo.participant || undefined },
+              message: quotedInfo.message
+            }, 'buffer', {}, {
+              logger: pino({ level: 'silent' }),
+              reuploadRequest: thisSock.updateMediaMessage
+            })
+          } : null
+        } : null;
+
+        console.log(`[Baileys Inbound] 📩 [${type}] Dari ${senderName} (${senderNumber}, fromMe: ${!!m.key?.fromMe}${isSelfChat ? ', self' : ''})${media ? ` [${media.kind}${media.ptt ? '/ptt' : ''}${media.isForwarded ? '/fwd' : ''}]` : ''}${quoted ? ` [reply→${quoted.author}${quoted.media ? `/${quoted.media.kind}` : ''}]` : ''}: "${rawText.slice(0, 70)}"`);
 
         // PENTING: Kami TIDAK memanggil sock.readMessages([m.key])
         // Ini menjamin WhatsApp Mas Andika TIDAK PERNAH auto-read (centang biru) secara sepihak!
@@ -330,6 +356,7 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
               isFromMe: !!m.key?.fromMe,
               isSelfChat,
               media,
+              quoted,
               msgKey: m.key
             });
           } catch (handlerErr) {
@@ -379,6 +406,7 @@ export async function sendBaileysMessage(recipient, messageText) {
   }
   if (preId) {
     sentMessageIds.add(preId);
+    rememberJokoMessage(preId);
     setTimeout(() => sentMessageIds.delete(preId), 300000);
   }
 
@@ -388,6 +416,7 @@ export async function sendBaileysMessage(recipient, messageText) {
       storeMessage(sent.key.id, sent.message);
     }
     sentMessageIds.add(sent.key.id);
+    rememberJokoMessage(sent.key.id);
     setTimeout(() => sentMessageIds.delete(sent.key.id), 300000);
   }
   return { success: true, messageId: sent?.key?.id };

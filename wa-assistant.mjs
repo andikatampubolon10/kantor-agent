@@ -82,6 +82,7 @@ import {
   extractMemoryBlocks,
   MAX_AI_FACTS_PER_TURN
 } from './memory-store.mjs';
+import { describeQuoted } from './reply-context.mjs';
 import {
   initBaileys,
   sendBaileysMessage,
@@ -822,12 +823,12 @@ async function executeCronWithAntigravity(taskPrompt) {
 }
 
 // Terima permintaan percakapan / tugas dan masukkan ke antrean agen
-async function executeWithAntigravity(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner, media = null) {
+async function executeWithAntigravity(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner, media = null, quoted = null) {
   const displayName = isOwner ? 'Mas Andika' : sanitizeDisplayName(senderName);
   const queued = enqueueAgentTask({
     label: isOwner ? 'owner' : 'tamu',
     chatId: targetRecipient,
-    run: () => runAgentConversation(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner, media)
+    run: () => runAgentConversation(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner, media, quoted)
   });
 
   if (!queued.accepted) {
@@ -847,28 +848,38 @@ async function executeWithAntigravity(userPrompt, targetRecipient, senderName, s
 }
 
 // Proses satu percakapan / tugas (dijalankan oleh antrean)
-async function runAgentConversation(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner, media = null) {
+async function runAgentConversation(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner, media = null, quoted = null) {
   try {
-    // Lampiran (gambar / voice note). Hanya OWNER yang lampirannya dibuka agen — lihat media-input.mjs.
+    // Lampiran (gambar / voice note) dari pesan ini, atau dari pesan yang dibalas bila pesan
+    // ini sendiri tanpa lampiran. Hanya OWNER yang lampirannya dibuka agen — lihat media-input.mjs.
+    const attachMedia = media || quoted?.media || null;
     let attachmentContext = '';
     let requestText = userPrompt;
-    if (media) {
+    if (attachMedia) {
       if (isOwner) {
-        const limitError = checkMediaLimits(media);
+        const limitError = checkMediaLimits(attachMedia);
         if (limitError) {
           await sendWhatsApp(targetRecipient, `Maaf Mas Andika, lampirannya tidak Joko buka: ${limitError}. 🙏`);
           return;
         }
-        const buffer = await media.download();
-        const filePath = saveMediaToInbox(buffer, media);
-        console.log(`[Media] 📎 ${media.kind}${media.ptt ? ' (voice note)' : ''}${media.isForwarded ? ' (forward)' : ''} ${Math.round(buffer.length / 1024)} KB -> ${path.basename(filePath)}`);
-        attachmentContext = buildOwnerAttachmentContext({ media, filePath });
-        if (!requestText) requestText = defaultOwnerRequest(media);
+        const buffer = await attachMedia.download();
+        const filePath = saveMediaToInbox(buffer, attachMedia);
+        console.log(`[Media] 📎 ${attachMedia.kind}${attachMedia.ptt ? ' (voice note)' : ''}${attachMedia.isForwarded ? ' (forward)' : ''}${attachMedia.fromQuote ? ' (dari reply)' : ''} ${Math.round(buffer.length / 1024)} KB -> ${path.basename(filePath)}`);
+        attachmentContext = buildOwnerAttachmentContext({ media: attachMedia, filePath });
+        if (!requestText && !quoted) requestText = defaultOwnerRequest(attachMedia);
       } else {
-        attachmentContext = guestAttachmentNote(media);
-        if (!requestText) requestText = '(tanpa teks, hanya lampiran)';
+        attachmentContext = guestAttachmentNote(attachMedia);
       }
     }
+
+    // Pesan yang dibalas: selalu data tidak terpercaya (bisa ditulis orang lain).
+    let quotedContext = '';
+    if (quoted) {
+      quotedContext = wrapUntrusted('PESAN YANG DIBALAS', describeQuoted(quoted, { mediaOpened: isOwner && !media && !!quoted.media })) +
+        `(Permintaan pengguna merujuk ke pesan yang dibalas di atas — mis. "ini", "pesan ini", "itu".)\n\n`;
+      if (!requestText) requestText = 'Tolong tanggapi pesan yang dibalas ini.';
+    }
+    if (!requestText) requestText = '(tanpa teks, hanya lampiran)';
 
     let tjContext = '';
     if (isTransjakartaQuery(userPrompt)) {
@@ -894,7 +905,7 @@ ${liveTJ.buses.length > 0 ? liveTJ.buses.slice(0, 3).map((b, i) => `  ${i+1}. Ar
     }
 
     let webIntelContext = '';
-    const sharedUrl = extractFirstUrl(userPrompt);
+    const sharedUrl = extractFirstUrl(userPrompt) || (quoted?.text ? extractFirstUrl(quoted.text) : null);
     if (sharedUrl) {
       console.log(`[Web Intelligence] 🌐 Mendeteksi link URL: ${sharedUrl}`);
       try {
@@ -953,7 +964,7 @@ ${String(scraped.content || '').slice(0, 3500)}`;
           `(Riwayat di atas hanya untuk memahami konteks atau merangkum obrolan grup bila diminta).\n\n`;
       }
     }
-    const dataContext = `${historyContext}${tjContext}${webIntelContext}${attachmentContext}`;
+    const dataContext = `${historyContext}${tjContext}${webIntelContext}${quotedContext}${attachmentContext}`;
 
     let responseText;
     if (isOwner) {
@@ -981,7 +992,7 @@ ${String(scraped.content || '').slice(0, 3500)}`;
     responseText = memoryBlocks.clean;
     if (memoryBlocks.items.length > 0) {
       const ownVoiceNote = media?.kind === 'audio' && !media.isForwarded;
-      const trustedTurn = isOwner && !historyContext && !webIntelContext && !tjContext && (!media || ownVoiceNote);
+      const trustedTurn = isOwner && !historyContext && !webIntelContext && !tjContext && !quoted && (!media || ownVoiceNote);
       if (!trustedTurn) {
         console.warn(`[Memory] ⛔ ${memoryBlocks.items.length} usulan memori diabaikan (${isOwner ? 'giliran memuat data pihak luar' : 'bukan owner'}).`);
       } else {
@@ -1077,7 +1088,7 @@ ${String(scraped.content || '').slice(0, 3500)}`;
 }
 
 // Handler Utama Pemrosesan Pesan Masuk (dipanggil oleh Baileys Direct Socket)
-async function processIncomingMessage({ rawSender, rawMessage = '', senderName = 'Teman', senderNumber = '', isFromMe = false, isSelfChat = false, media = null }) {
+async function processIncomingMessage({ rawSender, rawMessage = '', senderName = 'Teman', senderNumber = '', isFromMe = false, isSelfChat = false, media = null, quoted = null }) {
   rawMessage = String(rawMessage || '');
   if ((!rawMessage && !media) || !rawSender) return;
 
@@ -1191,7 +1202,7 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
         }
 
         if (isGroup) {
-          if (!userPrompt && !media) {
+          if (!userPrompt && !media && !quoted) {
             if (!isOwner && !isGroupMembersAllowed(rawSender)) {
               return;
             }
@@ -1346,7 +1357,7 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
             }
           }
 
-          if (!userPrompt && !media) {
+          if (!userPrompt && !media && !quoted) {
             const greeting = isOwner ? `Halo Mas Andika! Joko siaga di sini. Mau tanya atau minta bantuan apa nih?` : `Halo ${sanitizeDisplayName(senderName)}! Joko di sini. Mau tanya atau minta bantuan apa nih?`;
             await sendWhatsApp(targetRecipient, greeting);
             return;
@@ -1383,6 +1394,10 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
 • Contoh: \`Joko ingatkan saya 15 menit lagi untuk minum air\`
 
 _🛡️ Proteksi Privasi Aktif:_ Joko hanya akan merespons jika diawali dengan kata *Joko* agar obrolan pribadi Mas Andika dengan dosen, teman, atau rekan tetap aman dan tidak pernah diganggu.
+
+*Balas Pesan (Reply):*
+• Balas pesan apa pun dengan \`Joko rangkum ini\` / \`Joko jawab ini\`
+• Balas gambar / voice note dengan \`Joko ini apa?\` / \`Joko transkrip ini\`
 
 *Memori Jangka Panjang:*
 • \`Joko ingat bahwa <fakta>\` : Simpan fakta (mis. \`Joko ingat bahwa saya alergi udang\`)
@@ -1521,7 +1536,7 @@ _🛡️ Proteksi Privasi Aktif:_ Joko hanya akan merespons jika diawali dengan 
         }
 
         // Jalankan percakapan / tugas dengan Joko via Antigravity
-        executeWithAntigravity(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner, media).catch(err => {
+        executeWithAntigravity(userPrompt, targetRecipient, senderName, senderNumber, isGroup, isOwner, media, quoted).catch(err => {
           console.error('[Async Error]', err);
         });
 
@@ -1642,7 +1657,7 @@ server.listen(PORT, '127.0.0.1', async () => {
   try {
     initBaileys({
       ownerNumber: '6282163850914',
-      onMessage: async ({ rawMessage, targetRecipient, senderName, senderNumber, isGroup, isFromMe, isSelfChat, media }) => {
+      onMessage: async ({ rawMessage, targetRecipient, senderName, senderNumber, isGroup, isFromMe, isSelfChat, media, quoted }) => {
         await processIncomingMessage({
           rawSender: targetRecipient,
           rawMessage,
@@ -1650,7 +1665,8 @@ server.listen(PORT, '127.0.0.1', async () => {
           senderNumber,
           isFromMe,
           isSelfChat,
-          media
+          media,
+          quoted
         });
       }
     });
