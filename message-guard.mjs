@@ -165,6 +165,22 @@ export function isWhitelistListCommand(body) {
 }
 
 // ==========================================
+// KIRIM FILE (OWNER)
+// ==========================================
+
+const FILE_NOUN = /\b(?:file|berkas|dokumen|pdf|gambar|foto|grafik|chart|diagram|infografis|csv|excel|xlsx|spreadsheet|docx|word|ppt|pptx|slide|presentasi|mp3|audio|png|jpg)(?:-?nya)?\b/i;
+const FILE_VERB = /\b(?:kirim(?:kan|in)?|buat(?:kan|in)?|bikin(?:in|kan)?|export|ekspor|unduh|download|lampirkan|attach|share|bagikan|generate|jadikan|ubah\s+(?:jadi|ke))\b/i;
+
+/**
+ * Apakah pesan owner SENDIRI meminta file? Dipakai untuk mengizinkan pengiriman file
+ * ke grup / chat orang lain (instruksi dari data pihak luar tidak pernah dihitung).
+ */
+export function ownerRequestedFile(userPrompt) {
+  const t = String(userPrompt ?? '');
+  return FILE_NOUN.test(t) && FILE_VERB.test(t);
+}
+
+// ==========================================
 // MEMORI JANGKA PANJANG (OWNER)
 // ==========================================
 

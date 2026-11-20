@@ -381,6 +381,24 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
  * @param {string} messageText Teks pesan
  */
 export async function sendBaileysMessage(recipient, messageText) {
+  console.log(`[Baileys Outbox] 📤 Mengirim ke ${recipient} (${messageText.length} karakter)...`);
+  return sendRegistered(recipient, { text: messageText });
+}
+
+/**
+ * Kirim file: kind 'image' | 'audio' | 'document'.
+ * @param {{buffer:Buffer, kind:string, mimetype:string, fileName:string, caption?:string}} file
+ */
+export async function sendBaileysFile(recipient, { buffer, kind, mimetype, fileName, caption = '' }) {
+  let content;
+  if (kind === 'image') content = { image: buffer, mimetype, caption: caption || undefined };
+  else if (kind === 'audio') content = { audio: buffer, mimetype, ptt: false };
+  else content = { document: buffer, mimetype, fileName, caption: caption || undefined };
+  console.log(`[Baileys Outbox] 📎 Mengirim ${kind} "${fileName}" (${Math.round(buffer.length / 1024)} KB) ke ${recipient}...`);
+  return sendRegistered(recipient, content);
+}
+
+async function sendRegistered(recipient, content) {
   if (!sock || !isOpen) {
     throw new Error('Koneksi WhatsApp Baileys belum siap.');
   }
@@ -389,8 +407,6 @@ export async function sendBaileysMessage(recipient, messageText) {
   if (!jid) {
     throw new Error('JID penerima tidak valid.');
   }
-
-  console.log(`[Baileys Outbox] 📤 Mengirim ke ${jid} (${messageText.length} karakter)...`);
 
   // Daftarkan ID pesan SEBELUM dikirim. Balasan Joko terkirim dari akun Mas Andika
   // (fromMe = owner), dan Baileys memancarkan event upsert untuk pesan keluar sebelum
@@ -410,7 +426,7 @@ export async function sendBaileysMessage(recipient, messageText) {
     setTimeout(() => sentMessageIds.delete(preId), 300000);
   }
 
-  const sent = await sock.sendMessage(jid, { text: messageText }, preId ? { messageId: preId } : undefined);
+  const sent = await sock.sendMessage(jid, content, preId ? { messageId: preId } : undefined);
   if (sent?.key?.id) {
     if (sent.message) {
       storeMessage(sent.key.id, sent.message);

@@ -39,3 +39,4 @@ threads-debug-*.png
 wa-qr.txt
 # lampiran gambar/voice note dari WhatsApp (dihapus otomatis setelah 24 jam)
 media-inbox/
+media-outbox/
