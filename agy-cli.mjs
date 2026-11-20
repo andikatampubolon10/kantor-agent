@@ -35,12 +35,27 @@ const TIMEOUT_MSG = (ms) => ms >= 60000
   : `Waktu tunggu habis: tugas melebihi batas ${Math.round(ms / 1000)} detik dan dihentikan.`;
 
 /**
- * @returns {Promise<{ response: string, conversationId: string|null, resumed: boolean }>}
+ * Argumen CLI. Semua flag sebelum -p (karena -p memakan argumen berikutnya).
+ * allowMcpServers: server MCP yang tool-nya diizinkan TANPA dialog persetujuan.
+ * Di mode print, panggilan MCP tanpa izin ditolak otomatis (denied_actions: mcp).
+ * Izin dibatasi per server: "mcp(<server>/*)" — diuji; "mcp(<server>:*)" tidak berlaku.
  */
-export async function runAgyCli({ agyPath, prompt, resumeId = null, timeoutMs = 10 * 60 * 1000, env = process.env, cwd = process.cwd() }) {
+export function buildAgyCliArgs({ prompt, resumeId = null, timeoutMs, allowMcpServers = [] }) {
   const args = ['--output-format', 'json', '--print-timeout', `${Math.floor(timeoutMs / 1000)}s`];
+  const servers = allowMcpServers.filter(s => /^[A-Za-z0-9_-]+$/.test(s));
+  if (servers.length > 0) {
+    args.push('--settings', JSON.stringify({ permissions: { allow: servers.map(s => `mcp(${s}/*)`) } }));
+  }
   if (resumeId) args.push('--conversation', resumeId);
   args.push('-p', prompt);
+  return args;
+}
+
+/**
+ * @returns {Promise<{ response: string, conversationId: string|null, resumed: boolean }>}
+ */
+export async function runAgyCli({ agyPath, prompt, resumeId = null, timeoutMs = 10 * 60 * 1000, env = process.env, cwd = process.cwd(), allowMcpServers = [] }) {
+  const args = buildAgyCliArgs({ prompt, resumeId, timeoutMs, allowMcpServers });
 
   let stdout = '';
   let stderr = '';

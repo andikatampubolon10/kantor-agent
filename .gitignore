@@ -7,6 +7,7 @@ cloudflared.exe
 .wa-assistant-session.json
 .joko-state.json
 .joko-memory.json
+.joko-tools-token
 .group-history.json
 .group-access.json
 .personal-access.json
