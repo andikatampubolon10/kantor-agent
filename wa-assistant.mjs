@@ -105,8 +105,10 @@ import {
   initBaileys,
   sendBaileysMessage,
   sendBaileysFile,
-  getBaileysStatus
+  getBaileysStatus,
+  getPairingInfo
 } from './baileys-bridge.mjs';
+import { renderLinkPage } from './link-page.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -1682,6 +1684,15 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Halaman penautan WhatsApp (QR + kode pairing terbaru, diperbarui otomatis)
+  if (req.method === 'GET' && req.url === '/tautkan') {
+    const st = getBaileysStatus();
+    const html = renderLinkPage({ ready: st.ready, number: st.user?.id?.split(':')[0], ...getPairingInfo() });
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(html);
+    return;
+  }
+
   if (req.method === 'GET' && req.url === '/test-send') {
     try {
       console.log('[Test Endpoint] 🧪 Menjalankan tes kirim pesan ke Mas Andika (6282163850914)...');
@@ -1691,7 +1702,7 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ success: false, error: 'Baileys belum terhubung ke WhatsApp' }));
         return;
       }
-      const testMsg = `🤖 [TES MANDIRI JOKO]: Halo Mas Andika! Jalur pengiriman WebSocket Baileys langsung dari server AWS EC2 SUKSES 100%! 🚀 Jam: ${new Date().toLocaleTimeString('id-ID')} WIB`;
+      const testMsg = `🤖 [TES MANDIRI JOKO]: Halo Mas Andika! Jalur pengiriman WebSocket Baileys dari server Joko (${process.platform === 'win32' ? 'laptop' : 'server'}) SUKSES 100%! 🚀 Jam: ${new Date().toLocaleTimeString('id-ID')} WIB`;
       const sendRes = await sendBaileysMessage('6282163850914', testMsg);
       console.log('[Test Endpoint] ✅ Berhasil kirim pesan tes:', sendRes);
       res.writeHead(200, { 'Content-Type': 'application/json' });

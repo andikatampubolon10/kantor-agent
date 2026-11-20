@@ -1,9 +1,18 @@
 @echo off
 cd /d "d:\My Github Repo in here\kantor-agent"
-title Antigravity WhatsApp Assistant
+title Joko - WhatsApp Assistant
 echo ====================================================
-echo   Memulai Antigravity WhatsApp Assistant...
+echo   Memulai Joko (WhatsApp Assistant) di laptop...
 echo ====================================================
-"C:\Program Files\nodejs\node.exe" wa-assistant.mjs
+wscript "start-wa-assistant.vbs"
+echo Menunggu Joko siap...
+ping -n 9 127.0.0.1 >nul
+curl -s http://127.0.0.1:8795/
+echo.
+echo.
+echo Joko berjalan di latar belakang (restart otomatis bila crash).
+echo  - Status        : http://127.0.0.1:8795/
+echo  - Tautkan WA    : http://127.0.0.1:8795/tautkan
+echo  - Log harian    : %CD%\logs\
+echo  - Hentikan      : stop-wa-assistant.bat
 pause
-

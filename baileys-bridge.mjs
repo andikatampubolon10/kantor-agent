@@ -52,6 +52,13 @@ function storeMessage(keyId, message) {
 
 const AUTH_FOLDER = path.join(process.cwd(), 'baileys_auth_info');
 const PAIRING_FILE = path.join(process.cwd(), 'pairing-code.txt');
+
+// Info penautan terkini (kode pairing + QR mentah) untuk halaman lokal /tautkan.
+// Kode & QR hanya berlaku selama socket yang membuatnya masih hidup.
+let pairingInfo = { code: null, codeAt: 0, qr: null, qrAt: 0 };
+export function getPairingInfo() {
+  return { ...pairingInfo };
+}
 const DEFAULT_OWNER_NUMBER = '6282163850914';
 
 /**
@@ -126,12 +133,17 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
     const thisSock = makeWASocket({
       version,
       auth: state,
-      logger: pino({ level: 'silent' }), // Heningkan log verbose internal pino
+      // Log internal Baileys senyap secara bawaan; set BAILEYS_LOG_LEVEL=warn untuk diagnosis.
+      logger: pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' }),
       printQRInTerminal: isPairMethodQR,
       browser: browserIdentity,
       syncFullHistory: false,
       generateHighQualityLinkPreview: false,
       markOnlineOnConnect: false, // Tidak memaksa status online konstan
+      // Perpanjang umur setiap ref QR (bawaan 60 detik lalu 20 detik). Kode pairing hanya
+      // berlaku selama socket ini hidup; dengan bawaan, socket ditutup (408) sebelum
+      // pengguna sempat memasukkan kode.
+      qrTimeout: 120000,
       // Handler getMessage untuk menyelesaikan "Menunggu pesan ini" saat WhatsApp meminta dekripsi retry
       getMessage: async (key) => {
         if (key?.id && messageCache.has(key.id)) {
@@ -142,10 +154,19 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
     });
     sock = thisSock;
 
-    sock.ev.on('creds.update', saveCreds);
+    // Penyimpanan kredensial bisa bentrok dengan penghapusan folder sesi saat logout (ENOENT);
+    // tangkap supaya tidak menjadi unhandled rejection.
+    sock.ev.on('creds.update', () => {
+      Promise.resolve(saveCreds()).catch(err => console.warn('[Baileys] Gagal menyimpan kredensial:', err.message));
+    });
+    pairingInfo = { code: null, codeAt: 0, qr: null, qrAt: 0 };
 
-    // Minta Pairing Code jika belum terdaftar dan tidak dalam mode QR
-    if (!sock.authState.creds.registered) {
+    // Minta Pairing Code HANYA bila sesi benar-benar belum tertaut. Baileys mengisi
+    // creds.registered hanya pada penautan lewat KODE; penautan lewat scan QR hanya mengisi
+    // creds.me. Meminta kode untuk sesi yang sudah tertaut (setelah restart 515) menimpa
+    // creds.me dan membuat WhatsApp mengeluarkan perangkat (401).
+    const isLinked = (creds) => !!(creds?.registered || creds?.me?.id);
+    if (!isLinked(sock.authState.creds)) {
       if (isPairMethodQR) {
         console.log('[Baileys] 📷 Mode QR Code aktif. Silakan scan QR code di layar terminal...');
       } else {
@@ -157,11 +178,13 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
 
         setTimeout(async () => {
           try {
-            if (sock && !sock.authState.creds.registered) {
+            // Socket bisa sudah diganti / sudah tertaut lewat QR dalam 3 detik ini.
+            if (sock && thisSock === sock && !isLinked(sock.authState.creds)) {
               const rawCode = await sock.requestPairingCode(cleanPhone);
               const formattedCode = rawCode?.match(/.{1,4}/g)?.join('-') || rawCode;
               
               fs.writeFileSync(PAIRING_FILE, formattedCode, 'utf8');
+              if (thisSock === sock) pairingInfo = { ...pairingInfo, code: formattedCode, codeAt: Date.now() };
 
               console.log('\n====================================================');
               console.log('🔑 KODE TAUTAN WHATSAPP MAS ANDIKA (PAIRING CODE):');
@@ -186,6 +209,7 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
       const { connection, lastDisconnect, qr } = update;
 
       // Tangkap QR Code jika tersedia
+      if (qr && thisSock === sock) pairingInfo = { ...pairingInfo, qr, qrAt: Date.now() };
       if (qr) {
         try {
           const qrcode = (await import('qrcode-terminal')).default || (await import('qrcode-terminal'));
@@ -201,6 +225,7 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
       if (connection === 'close') {
         isConnecting = false;
         isOpen = false;
+        pairingInfo = { code: null, codeAt: 0, qr: null, qrAt: 0 }; // kode/QR socket ini tidak berlaku lagi
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason?.loggedOut;
 
@@ -219,6 +244,7 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
       } else if (connection === 'open') {
         isConnecting = false;
         isOpen = true;
+        pairingInfo = { code: null, codeAt: 0, qr: null, qrAt: 0 };
         console.log('====================================================');
         console.log('🚀 Asisten WhatsApp JOKO AKTIF & TERHUBUNG VIA BAILEYS!');
         console.log(`📱 Nomor Tersambung: ${sock.user?.id?.split(':')[0] || 'Unknown'}`);
@@ -238,7 +264,15 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
       if (type !== 'notify' && type !== 'append') return;
 
       for (const m of messages) {
-        if (!m.message) continue;
+        if (!m.message) {
+          // messageStubType 2 = CIPHERTEXT: pesan gagal didekripsi. Baileys otomatis meminta
+          // pengirim mengirim ulang (retry receipt); catat agar kegagalan tidak senyap.
+          if (m.messageStubType === 2) {
+            const params = (m.messageStubParameters || []).join(' | ').slice(0, 120);
+            console.warn(`[Baileys] 🔐 Pesan gagal didekripsi dari ${m.key?.remoteJid}${m.key?.participant ? ` (peserta ${m.key.participant})` : ''}, fromMe=${!!m.key?.fromMe}, id=${m.key?.id}${params ? ` — ${params}` : ''}. Menunggu kiriman ulang dari WhatsApp.`);
+          }
+          continue;
+        }
 
         // Simpan setiap payload pesan (masuk & keluar) ke cache agar dapat di-lookup saat WhatsApp meminta retry receipt (E2EE Signal Protocol)
         if (m.key?.id) {
@@ -260,6 +294,9 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
         // Cegah eksekusi pesan basi/historis dari sync WhatsApp (lebih dari 3 menit lalu)
         const msgTimeSec = typeof m.messageTimestamp === 'object' ? (m.messageTimestamp.low || 0) : Number(m.messageTimestamp || 0);
         if (msgTimeSec > 0 && ((Date.now() / 1000) - msgTimeSec > 180)) {
+          if (type === 'notify') {
+            console.log(`[Baileys] ⏭️ Pesan lama dilewati (${Math.round((Date.now() / 1000) - msgTimeSec)} detik) dari ${m.key?.remoteJid}, fromMe=${!!m.key?.fromMe}, id=${m.key?.id}.`);
+          }
           // Tetap disimpan ke cache di atas untuk dekripsi, tapi jangan dieksekusi ulang sebagai perintah baru
           continue;
         }
