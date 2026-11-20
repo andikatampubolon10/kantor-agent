@@ -76,6 +76,15 @@ export function parseInvocation(text, { isGroup = false } = {}) {
   return { invoked: false, body: '', via: null };
 }
 
+/**
+ * Voice note tidak punya teks, jadi tidak bisa diawali "Joko ...". Satu-satunya
+ * voice note yang dianggap panggilan: dikirim OWNER di chat dengan DIRI SENDIRI.
+ * Voice note ke teman, grup, atau dari orang lain tidak pernah diproses.
+ */
+export function isVoiceInvocation({ media, isSelfChat, isOwner, isGroup }) {
+  return media?.kind === 'audio' && isSelfChat === true && isOwner === true && !isGroup;
+}
+
 // ==========================================
 // TIDUR / BANGUN
 // ==========================================

@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
+import { extractMediaInfo } from './media-input.mjs';
 
 let baileysModule = null;
 let makeWASocket = null;
@@ -14,6 +15,7 @@ let DisconnectReason = null;
 let fetchLatestBaileysVersion = null;
 let Browsers = null;
 let normalizeMessageContent = null;
+let downloadMediaMessage = null;
 let proto = null;
 
 let sock = null;
@@ -76,6 +78,7 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
     fetchLatestBaileysVersion = baileysModule.fetchLatestBaileysVersion;
     Browsers = baileysModule.Browsers;
     normalizeMessageContent = baileysModule.normalizeMessageContent;
+    downloadMediaMessage = baileysModule.downloadMediaMessage;
     proto = baileysModule.proto;
   } catch (err) {
     console.error('[Baileys] ❌ Gagal memuat @whiskeysockets/baileys:', err.message);
@@ -294,9 +297,24 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
           msgContent.documentMessage?.caption ||
           '';
 
-        if (!rawText || !rawText.trim()) continue;
+        // Gambar / voice note. Belum diunduh di sini: unduhan hanya terjadi bila
+        // router memutuskan pesan ini memang untuk Joko (lihat media.download()).
+        const mediaInfo = extractMediaInfo(msgContent);
+        if ((!rawText || !rawText.trim()) && !mediaInfo) continue;
 
-        console.log(`[Baileys Inbound] 📩 [${type}] Dari ${senderName} (${senderNumber}, fromMe: ${!!m.key?.fromMe}): "${rawText.slice(0, 70)}"`);
+        const media = mediaInfo ? {
+          ...mediaInfo,
+          download: () => downloadMediaMessage(m, 'buffer', {}, {
+            logger: pino({ level: 'silent' }),
+            reuploadRequest: thisSock.updateMediaMessage
+          })
+        } : null;
+
+        // Chat dengan diri sendiri ("Message yourself"): pesan dari HP Mas Andika ke nomornya sendiri.
+        const ownLid = sock.user?.lid ? (sock.user.lid.split(':')[0] + '@lid') : null;
+        const isSelfChat = !isGroup && !!m.key?.fromMe && (remoteJid === myJid || (!!ownLid && rawRemoteJid === ownLid));
+
+        console.log(`[Baileys Inbound] 📩 [${type}] Dari ${senderName} (${senderNumber}, fromMe: ${!!m.key?.fromMe}${isSelfChat ? ', self' : ''})${media ? ` [${media.kind}${media.ptt ? '/ptt' : ''}${media.isForwarded ? '/fwd' : ''}]` : ''}: "${rawText.slice(0, 70)}"`);
 
         // PENTING: Kami TIDAK memanggil sock.readMessages([m.key])
         // Ini menjamin WhatsApp Mas Andika TIDAK PERNAH auto-read (centang biru) secara sepihak!
@@ -310,6 +328,8 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
               senderNumber,
               isGroup,
               isFromMe: !!m.key?.fromMe,
+              isSelfChat,
+              media,
               msgKey: m.key
             });
           } catch (handlerErr) {
