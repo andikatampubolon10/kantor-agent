@@ -98,12 +98,20 @@ class HttpError extends Error {
 export function createAdminPanel({
   port, tokenFile, logDir, getStatus, getModelInfo, saveModelSettings, testRoute, getPairing, actions,
   getUsage, getConversations, getConversation, chat, openFile,
-  extra = {} // { 'GET nama': ({query}) => obj, 'POST nama': ({body}) => obj } — galat boleh membawa .status
+  extra = {}, // { 'GET nama': ({query}) => obj, 'POST nama': ({body}) => obj } — galat boleh membawa .status
+  // Akses dari HP lewat Tailscale: remote.hosts() = nama HTTPS yang diizinkan (mis. laptop.tailnet.ts.net),
+  // remote.info() = keterangan status, remote.qr(text) = SVG QR.
+  remote = null
 }) {
   const token = loadOrCreateAdminToken(tokenFile);
   const sessionValue = crypto.createHmac('sha256', token).update('joko-admin-session-v1').digest('hex');
-  const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
-  const allowedOrigins = new Set([...allowedHosts].map(h => `http://${h}`));
+  const localHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+  const remoteHosts = () => {
+    try { return (remote?.hosts() || []).map(h => String(h).toLowerCase()); } catch { return []; }
+  };
+  const hostAllowed = (host) => localHosts.has(host) || remoteHosts().includes(host);
+  const originAllowed = (origin) =>
+    [...localHosts].some(h => origin === `http://${h}`) || remoteHosts().some(h => origin === `https://${h}`);
   const htmlFile = path.join(HERE, 'admin-ui.html');
   const failures = []; // waktu login gagal (batasi tebakan token)
 
@@ -123,7 +131,8 @@ export function createAdminPanel({
   }
 
   const isAuthed = (req) => safeEqual(parseCookies(req.headers.cookie)[COOKIE], sessionValue);
-  const cookie = (value, maxAge) => `${COOKIE}=${value}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`;
+  // Lewat Tailscale (HTTPS) cookie diberi Secure; lewat 127.0.0.1 (HTTP lokal) tidak bisa.
+  const cookie = (req, value, maxAge) => `${COOKIE}=${value}; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${localHosts.has(String(req.headers.host || '').toLowerCase()) ? '' : '; Secure'}`;
 
   function logFileFor(day) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) throw new HttpError(400, 'Tanggal log tidak valid.');
@@ -166,7 +175,7 @@ export function createAdminPanel({
     const api = p.slice('/admin/api/'.length);
 
     if (method === 'POST') {
-      if (!allowedOrigins.has(req.headers.origin || '') || req.headers['x-joko-admin'] !== '1') {
+      if (!originAllowed(req.headers.origin || '') || req.headers['x-joko-admin'] !== '1') {
         throw new HttpError(403, 'Permintaan ditolak (asal tidak dikenal).');
       }
     }
@@ -180,15 +189,23 @@ export function createAdminPanel({
         failures.push(now);
         throw new HttpError(401, 'Token salah.');
       }
-      return send(res, 200, { ok: true }, { 'Set-Cookie': cookie(sessionValue, 30 * 86400) });
+      return send(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, sessionValue, 30 * 86400) });
     }
     if (method === 'POST' && api === 'logout') {
-      return send(res, 200, { ok: true }, { 'Set-Cookie': cookie('', 0) });
+      return send(res, 200, { ok: true }, { 'Set-Cookie': cookie(req, '', 0) });
     }
 
     if (!isAuthed(req)) throw new HttpError(401, 'Belum masuk.');
 
     if (method === 'GET' && api === 'status') return send(res, 200, getStatus());
+    if (method === 'GET' && api === 'remote') {
+      const info = remote?.info?.() || { installed: false };
+      const host = remoteHosts()[0];
+      if (!host) return send(res, 200, { ...info, url: null, qrSvg: null });
+      const url = `https://${host}/admin`;
+      // QR berisi token: hanya diberikan ke sesi yang sudah login. Dipindai kamera HP -> langsung masuk.
+      return send(res, 200, { ...info, url, qrSvg: remote.qr ? remote.qr(`${url}#token=${token}`) : null });
+    }
     if (method === 'GET' && api === 'pairing') return send(res, 200, getPairing());
     if (method === 'GET' && api === 'models') return send(res, 200, getModelInfo());
     if (method === 'POST' && api === 'models') {
@@ -275,7 +292,10 @@ export function createAdminPanel({
     const url = new URL(req.url || '/', 'http://127.0.0.1');
     if (url.pathname !== '/admin' && !url.pathname.startsWith('/admin/')) return false;
     try {
-      if (!allowedHosts.has(String(req.headers.host || '').toLowerCase())) throw new HttpError(403, 'Host tidak diizinkan.');
+      const host = String(req.headers.host || '').toLowerCase();
+      // Nama Tailscale baru (mis. panel baru saja dibagikan): cek ulang status sekali sebelum menolak.
+      if (!hostAllowed(host) && remote?.refresh && /\.ts\.net$/.test(host)) await remote.refresh().catch(() => {});
+      if (!hostAllowed(host)) throw new HttpError(403, 'Host tidak diizinkan.');
       await route(req, res, url);
     } catch (err) {
       const status = err instanceof HttpError ? err.status : 500;

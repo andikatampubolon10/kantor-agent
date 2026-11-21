@@ -142,6 +142,50 @@ test('panel fase 3: rute tambahan dengan login, CSRF & status galat', () => with
   assert.equal((await req('/admin/api/skills', { method: 'POST', cookie, body: {} })).status, 404); // metode salah
 }));
 
+test('panel lewat Tailscale: host & origin HTTPS terdaftar diterima, QR hanya untuk sesi login', async () => {
+  const { serveTargetsPort } = await import('../tailscale-access.mjs');
+  assert.equal(serveTargetsPort('{"Web":{"laptop.x.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8795"}}}}}', 8795), true);
+  assert.equal(serveTargetsPort('{"Web":{"a:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:87950"}}}}}', 8795), false);
+  assert.equal(serveTargetsPort('{}', 8795), false);
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-remote-'));
+  let hosts = [];
+  const handler = createAdminPanel({
+    port: 8795, tokenFile: path.join(dir, 'token'), logDir: dir,
+    getStatus: () => ({ ok: 1 }), getModelInfo: () => ({}), saveModelSettings: () => {}, testRoute: () => ({}), getPairing: () => ({}), actions: {},
+    remote: { hosts: () => hosts, info: () => ({ installed: true, running: true }), qr: (t) => `<svg>${t.length}</svg>` }
+  });
+  const token = fs.readFileSync(path.join(dir, 'token'), 'utf8');
+  const server = http.createServer(async (req, res) => { if (!(await handler(req, res))) { res.writeHead(404); res.end(); } });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const call = (p, { host, origin, method = 'GET', body, cookie } = {}) => new Promise((resolve, reject) => {
+    const data = body ? JSON.stringify(body) : null;
+    const r = http.request({ host: '127.0.0.1', port, path: p, method, headers: { host, ...(origin ? { origin, 'x-joko-admin': '1', 'content-type': 'application/json' } : {}), ...(cookie ? { cookie } : {}) } }, (res) => {
+      let t = ''; res.on('data', c => t += c); res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: t }));
+    });
+    r.on('error', reject); if (data) r.write(data); r.end();
+  });
+  try {
+    const H = 'laptop.tail1234.ts.net';
+    assert.equal((await call('/admin', { host: H })).status, 403); // belum dibagikan
+    hosts = [H];
+    assert.equal((await call('/admin', { host: H })).status, 200);
+    assert.equal((await call('/admin', { host: 'evil.ts.net' })).status, 403);
+    assert.equal((await call('/admin/api/login', { host: H, origin: `http://${H}`, method: 'POST', body: { token } })).status, 403); // harus https
+    const ok = await call('/admin/api/login', { host: H, origin: `https://${H}`, method: 'POST', body: { token } });
+    assert.equal(ok.status, 200);
+    assert.match(ok.headers['set-cookie'][0], /; Secure$/);
+    const cookie = ok.headers['set-cookie'][0].split(';')[0];
+    assert.equal((await call('/admin/api/remote', { host: H })).status, 401);
+    const r = JSON.parse((await call('/admin/api/remote', { host: H, cookie })).body);
+    assert.equal(r.url, `https://${H}/admin`);
+    assert.match(r.qrSvg, /^<svg>\d+<\/svg>$/);
+    const local = await call('/admin/api/login', { host: '127.0.0.1:8795', origin: 'http://127.0.0.1:8795', method: 'POST', body: { token } });
+    assert.ok(!/Secure/.test(local.headers['set-cookie'][0])); // http lokal tanpa Secure
+  } finally { server.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('readLogChunk: baris belum lengkap ditahan, offset berlanjut', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-log-'));
   const f = path.join(dir, 'a.log');

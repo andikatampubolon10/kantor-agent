@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Panel Joko</title>
 <meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0d0d0f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Joko">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
 @font-face { font-family: "Jakarta"; src: url("/admin/assets/font.woff2") format("woff2"); font-weight: 200 800; font-display: swap; }
 /* Tema gelap (bawaan): latar hampir hitam, kartu abu gelap bersudut besar, aksen oranye. */
@@ -297,6 +302,13 @@ textarea.editor { flex: 1; min-height: 420px; font: 13px/1.65 var(--mono); tab-s
 .fbody .row { margin-top: auto; padding-top: 10px; }
 .status-off { color: var(--muted); }
 
+/* ---------- Buka di HP ---------- */
+.remote { display: grid; grid-template-columns: auto 1fr; gap: 22px; align-items: center; }
+.remote .qr svg { width: 230px; height: 230px; display: block; border-radius: 18px; background: #fff; padding: 8px; }
+.remote ol { margin: 0; padding-left: 20px; line-height: 1.7; }
+.remote-url { font-family: var(--mono); font-size: 12px; word-break: break-all; color: var(--muted); margin-top: 10px; }
+@media (max-width: 760px) { .remote { grid-template-columns: 1fr; justify-items: center; } }
+
 /* ---------- Login, toast, dialog ---------- */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login .card { width: 100%; max-width: 410px; padding: 30px; }
@@ -453,6 +465,7 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
         <button class="btn" id="btnSleep" type="button">Tidurkan</button>
         <button class="btn" id="btnRestart" type="button">Mulai ulang</button>
         <button class="btn danger" id="btnRelink" type="button">Tautkan ulang WA</button>
+        <button class="btn" id="btnRemote" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg>Buka di HP</button>
       </div>
       <div class="card">
         <div class="stat-top" style="flex-wrap:wrap">
@@ -724,6 +737,13 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
     </div>
   </form>
 </dialog>
+<dialog id="remoteDlg" class="wide">
+  <form method="dialog">
+    <h2>Buka panel di HP</h2>
+    <div id="remoteBody"><p class="muted">Memeriksa Tailscale…</p></div>
+    <div class="actions"><button class="btn" value="close">Tutup</button></div>
+  </form>
+</dialog>
 <div id="toast" class="toast hidden" role="status"></div>
 
 <script>
@@ -976,6 +996,34 @@ $$('#homeSeg button').forEach(b => b.onclick = () => {
   $('#runs').classList.toggle('hidden', b.dataset.v !== 'runs');
   $('#jobs').classList.toggle('hidden', b.dataset.v !== 'jobs');
 });
+// Buka panel di HP lewat Tailscale: QR berisi alamat + token -> kamera HP langsung masuk.
+$('#btnRemote').onclick = async () => {
+  $('#remoteDlg').showModal();
+  const body = $('#remoteBody');
+  body.innerHTML = '<p class="muted">Memeriksa Tailscale…</p>';
+  let r;
+  try { r = await api('remote'); } catch (e) { body.innerHTML = `<p style="color:var(--bad)">${esc(e.message)}</p>`; return; }
+  const setup = (why) => `<p>${why}</p>
+    <ol class="steps" style="color:var(--text)">
+      <li>Di laptop, klik dua kali <code>siapkan-panel-hp.bat</code> di folder Joko, lalu ikuti langkahnya (pasang &amp; login Tailscale).</li>
+      <li>Di HP, pasang aplikasi <b>Tailscale</b> (Play Store / App Store) dan login dengan akun yang sama.</li>
+      <li>Buka lagi tombol ini — QR untuk HP akan muncul.</li>
+    </ol>`;
+  if (r.installed === false || r.installed === null) { body.innerHTML = setup('Tailscale belum terpasang di laptop ini.'); return; }
+  if (!r.running) { body.innerHTML = setup(`Tailscale terpasang tetapi belum login${r.backend ? ` (status: ${esc(r.backend)})` : ''}.`); return; }
+  if (!r.url) { body.innerHTML = setup(`Tailscale aktif (${esc(r.dnsName || '')}), tetapi panel belum dibagikan ke jaringan Tailscale.`); return; }
+  body.innerHTML = `<div class="remote">
+      <div class="qr">${r.qrSvg}</div>
+      <div><ol>
+        <li>Pastikan aplikasi <b>Tailscale</b> di HP menyala${r.loginName ? ` dengan akun <b>${esc(r.loginName)}</b>` : ''}.</li>
+        <li>Pindai QR ini dengan kamera HP — panel langsung terbuka &amp; masuk.</li>
+        <li>Agar mudah dibuka lagi: menu browser → <b>Tambahkan ke layar utama</b>.</li>
+      </ol>
+      <div class="remote-url">${esc(r.url)}</div>
+      <p class="small muted" style="margin:10px 0 0">QR ini berisi kunci masuk panel — jangan dibagikan. Hanya perangkat di akun Tailscale Anda yang bisa membuka alamat ini.</p></div>
+    </div>`;
+};
+
 // "Tanya Joko" (pintasan & tombol tengah) langsung membuka chat panel.
 ['#qtChat', '#fabBtn'].forEach(sel => $(sel).addEventListener('click', () => { pendingChat = 'panel'; }));
 const jobType = (t) => ({ daily: 'Harian', weekly: 'Mingguan', once: 'Sekali', interval: 'Berkala', monthly: 'Bulanan' }[t] || t || '—');

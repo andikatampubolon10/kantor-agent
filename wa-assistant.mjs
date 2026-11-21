@@ -86,6 +86,7 @@ import {
 } from './model-router.mjs';
 import { createAdminPanel } from './admin-panel.mjs';
 import { createSkillStore } from './skill-store.mjs';
+import { createTailscaleAccess } from './tailscale-access.mjs';
 import { createActivityLog, summarizeUsage, listConversations, conversationMessages } from './activity-log.mjs';
 import {
   checkMediaLimits,
@@ -2003,8 +2004,12 @@ const panelExtra = {
   }
 };
 
+// Akses panel dari HP lewat Tailscale (lihat tailscale-access.mjs & siapkan-panel-hp.bat).
+const tailscale = createTailscaleAccess({ port: PORT });
+
 const adminPanel = createAdminPanel({
   extra: panelExtra,
+  remote: { hosts: tailscale.hosts, info: tailscale.info, refresh: tailscale.refresh, qr: (text) => renderQrSvg(text, 240) },
   port: PORT,
   tokenFile: path.join(process.cwd(), '.joko-admin-token'),
   logDir: path.join(process.cwd(), 'logs'),
