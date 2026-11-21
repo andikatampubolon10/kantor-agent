@@ -106,9 +106,12 @@ export const TOOL_DEFINITIONS = Object.freeze([
         subjudul: { type: 'string' },
         tanggal: { type: 'string', description: 'Opsional; default tanggal hari ini (WIB).' },
         orientasi: { type: 'string', enum: ['potret', 'lanskap'] },
-        isi: { type: 'array', description: 'pdf/docx: daftar blok {jenis: judul|paragraf|daftar|tabel|grafik|catatan|pemisah_halaman, ...}.', items: { type: 'object' } },
-        lembar: { type: 'array', description: 'xlsx: daftar sheet {nama, judul?, kolom, baris, total?, grafik?}.', items: { type: 'object' } },
-        slide: { type: 'array', description: 'pptx: daftar slide {judul, butir?, tabel?, grafik?, catatan?}.', items: { type: 'object' } },
+        tema: { type: 'string', enum: ['profesional', 'keuangan', 'hangat', 'energik', 'teknologi', 'elegan', 'minimal', 'berani'], description: 'Tema warna sesuai topik (default profesional).' },
+        gaya: { type: 'string', enum: ['laporan', 'surat'], description: 'surat = surat/dokumen resmi hitam-putih (pakai blok kop & tanda_tangan).' },
+        isi: { type: 'array', description: 'pdf/docx: daftar blok {jenis: judul|paragraf|daftar|tabel|grafik|angka_kunci|catatan|kop|tanda_tangan|pemisah_halaman, ...}.', items: { type: 'object' } },
+        lembar: { type: 'array', description: 'xlsx: daftar sheet {nama, judul?, kolom, baris, total?, grafik?, catatan?}.', items: { type: 'object' } },
+        slide: { type: 'array', description: 'pptx: daftar slide {judul, butir?, angka_kunci?, tabel?, grafik?, catatan?}.', items: { type: 'object' } },
+        penutup: { type: 'object', description: 'pptx (opsional): slide penutup gelap {judul, butir?}.' },
         grafik: { type: 'object', description: 'png: {jenis: batang|batang_horizontal|garis|pai|donat, judul, label, seri:[{nama, data}], format: rupiah|angka|persen}.' }
       },
       required: ['format']
@@ -184,13 +187,17 @@ export function createToolRunner(deps) {
         throw err;
       }
       const kb = Math.max(1, Math.round(r.bytes / 1024));
-      const lines = [
-        `File dibuat: ${r.fileName} (${r.info}, ${kb} KB).`,
-        r.previewPath && r.format !== 'png'
-          ? `Pratinjau halaman 1: ${r.previewPath} — buka dengan read_file dan periksa tampilannya (teks terpotong, tabel meluber, angka/total salah) sebelum mengirim; bila ada yang salah, perbaiki spesifikasi lalu panggil buat_file lagi dengan nama_file yang sama.`
-          : (r.format === 'png' ? `Periksa gambar dengan read_file: ${r.previewPath}` : 'Periksa kembali kolom, total, dan isi yang Anda kirim di spesifikasi.'),
-        `Kirim dengan blok di baris paling akhir jawaban: \`\`\`kirim-file\n{ "path": "${r.fileName}", "caption": "..." }\n\`\`\``
-      ];
+      const previews = Array.isArray(r.previewPaths) ? r.previewPaths : (r.previewPath ? [r.previewPath] : []);
+      const lines = [`File dibuat: ${r.fileName} (${r.info}, ${kb} KB).`];
+      if (previews.length) {
+        lines.push(`Pratinjau (${previews.length} gambar) — buka SEMUA dengan read_file dan nilai dengan rubrik skill sebelum mengirim:`);
+        previews.forEach(p => lines.push(`- ${p}`));
+      } else {
+        lines.push('Tidak ada pratinjau gambar untuk format ini: periksa kerangka/ringkasan di atas terhadap rubrik skill.');
+      }
+      lines.push('Bila ada yang kurang (teks terpotong, tabel meluber, angka salah, struktur lemah), perbaiki spesifikasi lalu panggil buat_file lagi dengan nama_file yang sama.');
+      lines.push('PENTING: hasil pemeriksaan ini catatan internal — JANGAN ditulis di jawaban. Jawaban akhir hanya pesan untuk Mas Andika (isi file 1–3 kalimat).');
+      lines.push(`Kirim dengan blok di baris paling akhir jawaban: \`\`\`kirim-file\n{ "path": "${r.fileName}", "caption": "..." }\n\`\`\``);
       return lines.join('\n');
     }
   };

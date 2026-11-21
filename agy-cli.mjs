@@ -4,10 +4,45 @@
  * yang melanjutkan percakapan "terakhir" di mesin — bisa milik tamu atau cron).
  * Output dibaca dalam format JSON: { conversation_id, status, response, ... }.
  */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
+
+export const CLI_BRAIN_DIR = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain');
+
+/**
+ * Pesan akhir model dari transkrip (langkah PLANNER_RESPONSE terakhir tanpa tool call).
+ * `response` dari agy menggabungkan SEMUA teks model selama tugas, termasuk catatan kerja
+ * di antara pemanggilan tool ("Sekarang saya panggil buat_file…") yang tidak untuk pengguna.
+ */
+export function extractFinalMessage(transcriptText) {
+  const steps = String(transcriptText || '').split(/\r?\n/).filter(Boolean)
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  for (let i = steps.length - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s.source !== 'MODEL' || s.type !== 'PLANNER_RESPONSE') continue;
+    if (Array.isArray(s.tool_calls) && s.tool_calls.length) return null; // tugas berakhir pada tool call
+    const text = typeof s.content === 'string' ? s.content.trim() : '';
+    return text || null;
+  }
+  return null;
+}
+
+function finalMessageFor(conversationId, combined, brainDir) {
+  if (!conversationId || !/^[A-Za-z0-9-]+$/.test(conversationId)) return null;
+  try {
+    const file = path.join(brainDir, conversationId, '.system_generated', 'logs', 'transcript.jsonl');
+    const final = extractFinalMessage(fs.readFileSync(file, 'utf8'));
+    // Hanya dipakai bila memang bagian dari jawaban gabungan (transkrip sesi yang benar).
+    return final && combined.includes(final.slice(0, 200)) ? final : null;
+  } catch {
+    return null;
+  }
+}
 
 export class AgentTimeoutError extends Error {
   constructor(message, { partial = '', stillRunning = false } = {}) {
@@ -56,7 +91,7 @@ export function buildAgyCliArgs({ prompt, resumeId = null, timeoutMs, allowMcpSe
 /**
  * @returns {Promise<{ response: string, conversationId: string|null, resumed: boolean }>}
  */
-export async function runAgyCli({ agyPath, prompt, resumeId = null, timeoutMs = 10 * 60 * 1000, env = process.env, cwd = process.cwd(), allowMcpServers = [], model = null }) {
+export async function runAgyCli({ agyPath, prompt, resumeId = null, timeoutMs = 10 * 60 * 1000, env = process.env, cwd = process.cwd(), allowMcpServers = [], model = null, brainDir = CLI_BRAIN_DIR }) {
   const args = buildAgyCliArgs({ prompt, resumeId, timeoutMs, allowMcpServers, model });
 
   let stdout = '';
@@ -98,7 +133,8 @@ export async function runAgyCli({ agyPath, prompt, resumeId = null, timeoutMs = 
   if (!response) throw new Error('Antigravity tidak menghasilkan jawaban.');
 
   const conversationId = result.conversation_id ? String(result.conversation_id) : null;
-  return { response, conversationId, resumed: !!resumeId && conversationId === resumeId };
+  const finalOnly = finalMessageFor(conversationId, response, brainDir);
+  return { response: finalOnly || response, conversationId, resumed: !!resumeId && conversationId === resumeId };
 }
 
 /** Mode teks lama tanpa sesi (untuk agy versi lama). */

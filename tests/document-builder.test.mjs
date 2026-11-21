@@ -11,6 +11,8 @@ import {
 import { getChromePath } from '../browser-utils.mjs';
 import { createToolRunner, ToolInputError } from '../joko-tools.mjs';
 
+// Tes tidak perlu membuka PowerPoint untuk pratinjau slide.
+process.env.JOKO_PPTX_PREVIEW = 'off';
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'joko-doc-'));
 const hasChrome = fs.existsSync(getChromePath());
 
@@ -95,6 +97,45 @@ test('PDF & grafik PNG lewat Chrome (dengan pratinjau)', { skip: !hasChrome && '
   assert.equal(buf.subarray(1, 4).toString(), 'PNG');
   assert.equal(buf.readUInt32BE(16), 2400); // 1200 px x2
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('kolom porsi dihitung mesin (bukan model) & total porsi 100', () => {
+  const t = normalizeSpec({ format: 'pdf', isi: [{ jenis: 'tabel', kolom: ['Kategori', { judul: 'Jumlah', format: 'rupiah' }, { judul: 'Porsi', hitung: 'porsi', dari: 'Jumlah' }], baris: [['Makan', 646000, 35.1], ['Rumah', 553000], ['Lain', 586000]], total: true }] }).isi[0];
+  assert.deepEqual(t.baris.map(r => r[2]), [36.2, 31, 32.8]); // 35.1 dari model ditimpa
+  assert.deepEqual(columnTotals(t), [null, 1785000, 100]);
+  assert.equal(formatCell(31, 'persen'), '31,0%');
+  assert.throws(() => normalizeSpec({ format: 'pdf', isi: [{ jenis: 'tabel', kolom: ['A', { judul: 'P', hitung: 'porsi' }], baris: [['x', 1]] }] }), /porsi/);
+});
+
+test('tema, gaya surat, blok info/kop/tanda tangan/angka kunci', () => {
+  const s = normalizeSpec({ format: 'pdf', gaya: 'surat', tema: 'tidak-ada', isi: [
+    { jenis: 'kop', nama: 'PT A', baris: ['Jl. B'] },
+    { jenis: 'info', baris: [['Nomor', '1/X'], ['Perihal', '**Izin**']] },
+    { jenis: 'angka_kunci', item: [{ label: 'Total', nilai: 5000, format: 'rupiah', perubahan: 8, baik_jika: 'turun' }] },
+    { jenis: 'tanda_tangan', tempat_tanggal: 'Jakarta, 1 Des 2026', nama: 'Andika' }
+  ] });
+  assert.equal(s.tema, 'profesional');
+  assert.equal(s.tanggal, ''); // surat tidak memberi tanggal otomatis
+  const html = buildPdfHtml(s);
+  assert.match(html, /class="kop"/);
+  assert.match(html, /class="info"/);
+  assert.match(html, /<strong>Izin<\/strong>/);
+  assert.match(html, /kpi-c bad/); // biaya naik = merah
+  assert.match(html, /class="ttd"/);
+  assert.ok(!/<header>/.test(html)); // surat tanpa header judul berwarna
+  const lap = buildPdfHtml(normalizeSpec({ format: 'pdf', tema: 'keuangan', judul: 'L', isi: [{ jenis: 'paragraf', teks: 'x' }] }));
+  assert.match(lap, /#1F5136/);
+  assert.ok(!/border-left:\s*\d+px solid/.test(lap)); // tanpa batang aksen dekoratif
+});
+
+test('tanggal ISO jadi format Indonesia, *miring*, pai > 6 irisan digabung', () => {
+  assert.equal(normalizeSpec({ format: 'pdf', tanggal: '2026-11-21', isi: [{ jenis: 'paragraf', teks: 'x' }] }).tanggal, '21 November 2026');
+  assert.equal(normalizeSpec({ format: 'pdf', tanggal: 'Minggu ke-3 November', isi: [{ jenis: 'paragraf', teks: 'x' }] }).tanggal, 'Minggu ke-3 November');
+  const html = buildPdfHtml(normalizeSpec({ format: 'pdf', isi: [{ jenis: 'paragraf', teks: 'a *b* c 3*4' }] }));
+  assert.match(html, /a <em>b<\/em> c 3\*4/);
+  const g = normalizeSpec({ format: 'png', grafik: { jenis: 'pai', label: ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'], seri: [{ data: [8, 7, 6, 5, 4, 3, 2, 1] }] } }).grafik;
+  assert.deepEqual(g.label, ['A', 'B', 'C', 'D', 'E', 'Lain-lain']);
+  assert.deepEqual(g.seri[0].data, [8, 7, 6, 5, 4, 6]);
 });
 
 test('tool buat_file: spesifikasi salah -> ToolInputError, sukses -> instruksi kirim', async () => {

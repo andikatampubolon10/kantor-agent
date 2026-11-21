@@ -17,3 +17,17 @@ test('[#5] parse output JSON agy', () => {
   assert.equal(parseAgyJson('bukan json'), null);
   assert.equal(parseAgyJson(''), null);
 });
+
+test('pesan akhir diambil dari transkrip: catatan kerja di antara tool call dibuang', async () => {
+  const { extractFinalMessage } = await import('../agy-cli.mjs');
+  const lines = [
+    { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', content: 'buat laporan' },
+    { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', content: 'Sekarang saya panggil buat_file:', tool_calls: [{ name: 'call_mcp_tool' }] },
+    { step_index: 2, source: 'MODEL', type: 'GENERIC', content: 'hasil tool' },
+    { step_index: 3, source: 'MODEL', type: 'PLANNER_RESPONSE', content: '  Laporan sudah jadi, Mas.\n```kirim-file\n{}\n```  ' }
+  ].map(o => JSON.stringify(o)).join('\n');
+  assert.equal(extractFinalMessage(lines), 'Laporan sudah jadi, Mas.\n```kirim-file\n{}\n```');
+  // Tugas yang berakhir pada tool call / transkrip rusak -> null (pakai jawaban gabungan)
+  assert.equal(extractFinalMessage(lines.split('\n').slice(0, 2).join('\n')), null);
+  assert.equal(extractFinalMessage('bukan json'), null);
+});
