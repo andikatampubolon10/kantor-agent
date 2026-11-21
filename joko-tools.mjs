@@ -119,6 +119,47 @@ export const TOOL_DEFINITIONS = Object.freeze([
   }
 ]);
 
+/**
+ * Info tool untuk halaman "Tools & MCP" di panel admin.
+ *  label  : nama ramah
+ *  sifat  : baca (hanya mengambil data) | tulis (membuat file di outbox) | berat (proses panjang)
+ *  uji    : boleh diuji dari panel (hanya tool baca yang aman & cepat)
+ */
+export const TOOL_PANEL_INFO = Object.freeze({
+  transjakarta_live: { label: 'Radar Transjakarta', sifat: 'baca', uji: true },
+  baca_halaman_web: { label: 'Baca halaman web', sifat: 'baca', uji: true },
+  cari_berita: { label: 'Cari berita', sifat: 'baca', uji: true },
+  briefing_eksekutif: { label: 'Briefing eksekutif', sifat: 'berat', uji: false },
+  daftar_jadwal: { label: 'Daftar jadwal', sifat: 'baca', uji: true },
+  status_joko: { label: 'Status Joko', sifat: 'baca', uji: true },
+  buat_file: { label: 'Buat file', sifat: 'tulis', uji: false }
+});
+
+/** Ringkasan argumen untuk catatan aktivitas (tanpa isi dokumen penuh). */
+export function toolArgsHint(name, args = {}) {
+  const a = args && typeof args === 'object' ? args : {};
+  const s = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+  let hint = '';
+  if (name === 'buat_file') hint = [s(a.format), s(a.nama_file)].filter(Boolean).join(' · ');
+  else hint = s(a.pertanyaan || a.url || a.topik || '');
+  return hint.length > 140 ? `${hint.slice(0, 140)}…` : hint;
+}
+
+/**
+ * Hasil `agy mcp list` -> [{ name, type, status, command }].
+ * Format: "NAME  TYPE  STATUS  COMMAND/URL" (perintah boleh berisi spasi).
+ */
+export function parseMcpList(text) {
+  const out = [];
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || /^NAME\s+TYPE\s+STATUS/i.test(line)) continue;
+    const m = line.match(/^([A-Za-z0-9_.-]+)\s+(stdio|https?|sse|streamable[-_]?http|ws)\s+(enabled|disabled|error|connected|failed)\s+(.+)$/i);
+    if (m) out.push({ name: m[1], type: m[2], status: m[3].toLowerCase(), command: m[4].trim() });
+  }
+  return out;
+}
+
 export class ToolInputError extends Error {}
 
 /**

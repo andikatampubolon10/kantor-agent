@@ -31,6 +31,10 @@ import {
 import {
   createToolRunner,
   ToolInputError,
+  TOOL_DEFINITIONS,
+  TOOL_PANEL_INFO,
+  toolArgsHint,
+  parseMcpList,
   formatTransitInfo,
   formatScrapedPage,
   formatNewsArticles
@@ -77,7 +81,7 @@ import {
   sanitizeDisplayName,
   wrapUntrusted
 } from './message-guard.mjs';
-import { runGuestPrompt, GuestAgentError } from './guest-agent.mjs';
+import { runGuestPrompt, GuestAgentError, GUEST_DENY_RULES } from './guest-agent.mjs';
 import { createAgentQueue } from './agent-queue.mjs';
 import { runAgyCli, runAgyCliLegacy, AgentTimeoutError } from './agy-cli.mjs';
 import {
@@ -87,7 +91,7 @@ import {
 import { createAdminPanel } from './admin-panel.mjs';
 import { createSkillStore } from './skill-store.mjs';
 import { createTailscaleAccess } from './tailscale-access.mjs';
-import { createActivityLog, summarizeUsage, listConversations, conversationMessages } from './activity-log.mjs';
+import { createActivityLog, summarizeUsage, summarizeTools, listConversations, conversationMessages } from './activity-log.mjs';
 import {
   checkMediaLimits,
   saveMediaToInbox,
@@ -202,6 +206,9 @@ async function callAgy(args) {
   // Batas waktu wajib: tanpa ini satu panggilan macet bisa memblokir antrean selamanya.
   return await execFileAsync(AGY_PATH, args, { env, windowsHide: true, timeout: 120000, maxBuffer: 10 * 1024 * 1024 });
 }
+
+// Server MCP yang tool-nya boleh dipakai agen owner tanpa dialog persetujuan.
+const OWNER_MCP_ALLOW = Object.freeze(['joko']);
 
 const PORT = parseInt(process.env.PORT || '8795', 10);
 const AGY_PATH = process.platform === 'win32'
@@ -815,7 +822,7 @@ async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeT
 
   const runInfo = { at: Date.now(), model, tier: route.tier, reason: route.reason, persist: !!persist, chat: targetRecipient ? chatKey(targetRecipient) : (label || null), label: label || (persist ? 'owner' : 'jadwal') };
   try {
-    const run = (m) => runAgyCli({ agyPath: AGY_PATH, prompt, resumeId, timeoutMs: OWNER_TASK_TIMEOUT_MS, env: agyEnv(), allowMcpServers: ['joko'], model: m });
+    const run = (m) => runAgyCli({ agyPath: AGY_PATH, prompt, resumeId, timeoutMs: OWNER_TASK_TIMEOUT_MS, env: agyEnv(), allowMcpServers: OWNER_MCP_ALLOW, model: m });
     let result;
     let note = '';
     try {
@@ -1748,6 +1755,21 @@ const runJokoTool = createToolRunner({
   })
 });
 
+/** Jalankan tool + catat ke aktivitas (halaman Tools & MCP). source: agen | panel. */
+async function runToolLogged(name, args, source) {
+  if (!Object.hasOwn(TOOL_PANEL_INFO, name)) return runJokoTool(name, args); // nama asing: ditolak runner, tidak dicatat
+  const started = Date.now();
+  const base = { type: 'tool', t: started, name, source, hint: toolArgsHint(name, args) };
+  try {
+    const result = await runJokoTool(name, args);
+    activity.append({ ...base, ok: true, ms: Date.now() - started });
+    return result;
+  } catch (err) {
+    activity.append({ ...base, ok: false, ms: Date.now() - started, error: String(err?.message || err).slice(0, 300) });
+    throw err;
+  }
+}
+
 // buat_file membawa seluruh isi dokumen (tabel bisa ribuan baris).
 const MAX_TOOL_BODY = 1024 * 1024;
 async function handleToolsRequest(req, res) {
@@ -1764,10 +1786,9 @@ async function handleToolsRequest(req, res) {
   try { payload = JSON.parse(body); } catch { return sendJson(400, { error: 'JSON tidak valid.' }); }
 
   const name = String(payload?.name || '');
-  const started = Date.now();
   try {
-    const result = await runJokoTool(name, payload?.arguments ?? {});
-    console.log(`[Tools] 🔧 ${name} selesai (${Date.now() - started} ms, ${result.length} karakter).`);
+    const result = await runToolLogged(name, payload?.arguments ?? {}, 'agen');
+    console.log(`[Tools] 🔧 ${name} selesai (${result.length} karakter).`);
     return sendJson(200, { result });
   } catch (err) {
     console.warn(`[Tools] ⚠️ ${name} gagal: ${err.message}`);
@@ -1911,7 +1932,71 @@ async function jobTargets() {
   ];
 }
 
+// Daftar server MCP dari Antigravity CLI (di-cache 60 dtk; perintah agy cukup lambat).
+let mcpCache = { at: 0, data: null };
+async function mcpServers(force = false) {
+  if (!force && mcpCache.data && Date.now() - mcpCache.at < 60000) return mcpCache.data;
+  let data;
+  try {
+    const { stdout } = await execFileAsync(AGY_PATH, ['mcp', 'list'], { windowsHide: true, timeout: 20000, maxBuffer: 1024 * 1024 });
+    data = { ok: true, items: parseMcpList(stdout).map(s => ({ ...s, ownerAllowed: OWNER_MCP_ALLOW.includes(s.name) })) };
+  } catch (err) {
+    data = { ok: false, items: [], error: `agy mcp list gagal: ${String(err.stderr || err.message).trim().slice(0, 200)}` };
+  }
+  mcpCache = { at: Date.now(), data };
+  return data;
+}
+
+// Tool bawaan Antigravity CLI (bukan buatan Joko). Tamu: semua diblokir lewat GUEST_DENY_RULES.
+const BUILTIN_TOOLS = [
+  { rule: 'command', label: 'Terminal (perintah shell)' },
+  { rule: 'read_file', label: 'Baca file' },
+  { rule: 'write_file', label: 'Tulis file' },
+  { rule: 'edit_file', label: 'Ubah file' },
+  { rule: 'read_url', label: 'Baca URL' },
+  { rule: 'browser', label: 'Browser' }
+];
+
 const panelExtra = {
+  // Tools & MCP
+  'GET tools': async ({ query }) => {
+    const days = Math.min(30, Math.max(1, Number.parseInt(query.get('days'), 10) || 7));
+    const usage = summarizeTools(activity.read(days));
+    const guestDenied = new Set(GUEST_DENY_RULES);
+    return {
+      days,
+      servers: await mcpServers(query.get('refresh') === '1'),
+      endpoint: { url: `http://127.0.0.1:${PORT}/tools/call`, tokenReady: fs.existsSync(TOOLS_TOKEN_FILE) },
+      tools: TOOL_DEFINITIONS.map(t => ({
+        name: t.name,
+        description: t.description,
+        params: Object.entries(t.inputSchema?.properties || {}).map(([k, p]) => ({
+          name: k, type: p.type, description: p.description || '', enum: p.enum || null,
+          required: (t.inputSchema?.required || []).includes(k)
+        })),
+        ...TOOL_PANEL_INFO[t.name],
+        stats: usage.stats[t.name] || null
+      })),
+      builtins: BUILTIN_TOOLS.map(b => ({ ...b, guestBlocked: guestDenied.has(`${b.rule}(*)`) })),
+      guestMcpBlocked: guestDenied.has('mcp(*)'),
+      total: usage.total,
+      failed: usage.failed,
+      recent: usage.recent
+    };
+  },
+  'POST tools/test': async ({ body }) => {
+    const name = String(body.name || '');
+    if (!TOOL_PANEL_INFO[name]?.uji) throw Object.assign(new Error('Tool ini tidak bisa diuji dari panel.'), { status: 400 });
+    const args = body.args && typeof body.args === 'object' && !Array.isArray(body.args) ? body.args : {};
+    const started = Date.now();
+    try {
+      const result = await runToolLogged(name, args, 'panel');
+      console.log(`[Admin] 🔧 Uji tool ${name} (${Date.now() - started} ms).`);
+      return { ok: true, ms: Date.now() - started, result };
+    } catch (err) {
+      return { ok: false, ms: Date.now() - started, result: err instanceof ToolInputError ? `Masukan tidak valid: ${err.message}` : `Gagal: ${err.message}` };
+    }
+  },
   // Skill
   'GET skills': () => ({ items: skillStore.list() }),
   'GET skill': ({ query }) => skillStore.read(query.get('name')),

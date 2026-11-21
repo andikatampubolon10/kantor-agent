@@ -151,6 +151,18 @@ code, .mono { font-family: var(--mono); font-size: 12.5px; }
 .pills { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
 .pills::-webkit-scrollbar { display: none; }
 
+/* ---------- Tools & MCP ---------- */
+.tool-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+.tool { background: var(--surface-2); border: 1px solid var(--line); border-radius: 18px; padding: 16px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.tool-head { display: flex; gap: 12px; align-items: flex-start; }
+.tool-head .t { font-weight: 750; }
+.tool-desc { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.tool-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: auto; padding-top: 4px; }
+.tool .chip.req { color: var(--text); }
+.tag.baca { background: var(--ok-soft); color: var(--ok); } .tag.tulis { background: var(--warn-soft); color: var(--warn); } .tag.berat { background: var(--bad-soft); color: var(--bad); }
+.cmd { font: 12px var(--mono); color: var(--muted); word-break: break-all; }
+.tool-out { white-space: pre-wrap; font: 12.5px/1.55 var(--mono); background: var(--bg); border: 1px solid var(--line); border-radius: 12px; padding: 12px; max-height: 340px; overflow: auto; margin: 0; }
+
 /* ---------- Komponen ---------- */
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-card); padding: 20px; box-shadow: var(--shadow); min-width: 0; }
 .grid { display: grid; gap: 16px; }
@@ -375,6 +387,9 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
   textarea.editor { min-height: 360px; }
   #usageKpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   #usageKpi .card { padding: 14px; } #usageKpi .stat-big { font-size: 19px; }
+  #toolKpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  #toolKpi .card { padding: 14px; } #toolKpi .stat-big { font-size: 19px; }
+  .tool-grid { grid-template-columns: minmax(0, 1fr); }
   .convo { grid-template-columns: minmax(0, 1fr); height: auto; min-height: 0; }
   .convo.detail .convo-list, .convo:not(.detail) .convo-main { display: none; }
   .convo-main { height: calc(100vh - 290px); min-height: 420px; }
@@ -418,6 +433,7 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
       <div class="nav-sec">Pengaturan</div>
       <a href="#/model" data-page="model"><span class="ti t-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v6M6 15v6M18 3v10M18 19v2M12 3v2M12 11v10"/><circle cx="6" cy="12" r="2.5"/><circle cx="12" cy="8" r="2.5"/><circle cx="18" cy="16" r="2.5"/></svg></span><span>Model &amp; Routing</span></a>
       <a href="#/skill" data-page="skill"><span class="ti t-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7l9 5 9-5-9-5z"/><path d="m3 12 9 5 9-5M3 17l9 5 9-5"/></svg></span><span>Skill</span></a>
+      <a href="#/tools" data-page="tools"><span class="ti t-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.8-.4-.4-2.8z"/></svg></span><span>Tools &amp; MCP</span></a>
       <a href="#/jadwal" data-page="jadwal"><span class="ti t-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18M12 14v3l2 1"/></svg></span><span>Jadwal</span></a>
       <a href="#/memori" data-page="memori"><span class="ti t-rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M18.5 20H21.5a5 5 0 0 0-3.5-4.8"/></svg></span><span>Memori &amp; Kontak</span></a>
       <div class="nav-sec">Sistem</div>
@@ -600,6 +616,28 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
       </div>
     </section>
 
+    <!-- TOOLS & MCP -->
+    <section id="page-tools" class="hidden">
+      <div class="head">
+        <div><h1>Tools &amp; MCP</h1><p class="sub">Alat yang bisa dipakai agen Joko saat bekerja, siapa yang boleh memakainya, dan riwayat pemanggilannya.</p></div>
+        <button class="btn" type="button" id="toolRefresh">Segarkan</button>
+      </div>
+      <div class="grid g4" id="toolKpi"></div>
+      <div class="card" style="margin-top:16px">
+        <div class="stat-top"><h2 style="margin:0">Server MCP</h2><span class="small muted">dari <code>agy mcp list</code></span></div>
+        <div class="table-wrap" id="mcpTable"></div>
+        <p class="small muted" id="mcpEndpoint" style="margin:12px 0 0"></p>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="stat-top"><h2 style="margin:0">Tool Joko</h2><span class="small muted">statistik 7 hari terakhir</span></div>
+        <div class="tool-grid" id="toolGrid"></div>
+      </div>
+      <div class="grid g2" style="margin-top:16px">
+        <div class="card"><h2>Hak akses</h2><div class="table-wrap" id="toolAccess"></div></div>
+        <div class="card"><h2>Panggilan terakhir</h2><div class="table-wrap" id="toolRecent"></div></div>
+      </div>
+    </section>
+
     <!-- JADWAL -->
     <section id="page-jadwal" class="hidden">
       <div class="head">
@@ -737,6 +775,18 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
     </div>
   </form>
 </dialog>
+<dialog id="toolDlg" class="wide">
+  <form id="toolForm" autocomplete="off">
+    <h2 id="toolDlgTitle">Uji tool</h2>
+    <p class="small muted" id="toolDlgDesc" style="margin-top:0"></p>
+    <div class="stack" style="gap:12px" id="toolFields"></div>
+    <div id="toolResult" style="margin-top:14px"></div>
+    <div class="actions">
+      <button class="btn" type="button" id="toolCancel">Tutup</button>
+      <button class="btn primary" id="toolRun">Jalankan</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="remoteDlg" class="wide">
   <form method="dialog">
     <h2>Buka panel di HP</h2>
@@ -853,7 +903,7 @@ function stopAll() { timers.forEach(clearInterval); timers = []; }
 function every(fn, msInterval) { fn(); timers.push(setInterval(() => { if (!document.hidden) fn(); }, msInterval)); }
 function route() {
   const page = (location.hash.match(/^#\/(\w+)/) || [])[1] || 'beranda';
-  const titles = { beranda: 'Beranda', pemakaian: 'Pemakaian', percakapan: 'Percakapan', model: 'Model & Routing', skill: 'Skill', jadwal: 'Jadwal', memori: 'Memori & Kontak', file: 'File', log: 'Log' };
+  const titles = { beranda: 'Beranda', pemakaian: 'Pemakaian', percakapan: 'Percakapan', model: 'Model & Routing', skill: 'Skill', tools: 'Tools & MCP', jadwal: 'Jadwal', memori: 'Memori & Kontak', file: 'File', log: 'Log' };
   const valid = titles[page] ? page : 'beranda';
   stopAll();
   window.scrollTo(0, 0);
@@ -868,6 +918,7 @@ function route() {
   if (valid === 'percakapan') { startConvo(); every(loadSide, 10000); }
   if (valid === 'log') { startLog(); every(loadSide, 10000); }
   if (valid === 'skill') { loadSkills(); every(loadSide, 10000); }
+  if (valid === 'tools') { every(() => loadTools(), 20000); every(loadSide, 10000); }
   if (valid === 'jadwal') { every(loadJobList, 15000); every(loadSide, 10000); }
   if (valid === 'memori') { loadMemory(); loadContacts(); every(loadSide, 10000); }
   if (valid === 'file') { every(loadFiles, 20000); every(loadSide, 10000); }
@@ -1593,6 +1644,88 @@ $('#jobForm').addEventListener('submit', async (ev) => {
     toast(`${editingJob ? 'Jadwal diubah' : 'Jadwal dibuat'}: ${r.job.config?.readableTime || ''}`);
     loadJobList();
   } catch (e) { $('#jobErr').textContent = e.message; }
+  finally { btn.disabled = false; }
+});
+
+// ---------- Tools & MCP ----------
+let toolData = null, testingTool = null;
+const tms = (v) => v < 1000 ? `${Math.round(v)} md` : ms(v);
+const SIFAT = { baca: 'Hanya baca', tulis: 'Membuat file', berat: 'Proses panjang' };
+async function loadTools(refresh = false) {
+  try { toolData = await api('tools?days=7' + (refresh ? '&refresh=1' : '')); }
+  catch (e) { if (e.status !== 401) $('#toolGrid').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const d = toolData, srv = d.servers.items;
+  const used = d.tools.filter(t => t.stats).length;
+  $('#toolKpi').innerHTML = [
+    kpi('Server MCP', fmtNum(srv.length), `${srv.filter(x => x.status === 'enabled').length} aktif · ${srv.filter(x => x.ownerAllowed).length} diizinkan otomatis`),
+    kpi('Tool Joko', fmtNum(d.tools.length), `${d.tools.filter(t => t.uji).length} bisa diuji dari panel`),
+    kpi('Panggilan 7 hari', fmtNum(d.total), `${used} dari ${d.tools.length} tool terpakai`),
+    kpi('Gagal', fmtNum(d.failed), d.total ? `${pct(d.total - d.failed, d.total)} berhasil` : 'belum ada panggilan')
+  ].join('');
+
+  $('#mcpTable').innerHTML = !d.servers.ok ? `<div class="empty">${esc(d.servers.error)}</div>`
+    : srv.length ? `<table><thead><tr><th>Server</th><th>Status</th><th>Agen owner</th></tr></thead><tbody>${
+      srv.map(x => `<tr><td><b class="mono">${esc(x.name)}</b> <span class="tag">${esc(x.type)}</span><div class="cmd" style="margin-top:4px">${esc(x.command)}</div></td>
+        <td>${x.status === 'enabled' ? '<span class="pill ok">Aktif</span>' : `<span class="pill">${esc(x.status)}</span>`}</td>
+        <td>${x.ownerAllowed ? '<span class="pill ok">Otomatis</span>' : '<span class="pill warn" title="Di mode WhatsApp tidak ada yang bisa menyetujui, jadi panggilan ditolak">Ditolak</span>'}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">Belum ada server MCP terdaftar. Jalankan <code>npm run setup-mcp</code>.</div>';
+  $('#mcpEndpoint').innerHTML = `Server <b>joko</b> meneruskan panggilan ke <code>${esc(d.endpoint.url)}</code> · token ${d.endpoint.tokenReady ? '<span class="pill ok">siap</span>' : '<span class="pill bad">belum ada</span>'}`;
+
+  $('#toolGrid').innerHTML = d.tools.map(t => {
+    const st = t.stats;
+    const statTxt = st ? `${fmtNum(st.calls)}× · median ${tms(st.medianMs)} · terakhir ${ago(st.lastAt)}${st.failed ? ` · <span style="color:var(--bad)">${st.failed} gagal</span>` : ''}` : 'Belum dipanggil 7 hari ini';
+    return `<div class="tool">
+      <div class="tool-head"><span class="ti t-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.8-.4-.4-2.8z"/></svg></span>
+        <div style="min-width:0"><div class="t">${esc(t.label || t.name)} <span class="tag ${esc(t.sifat)}">${esc(SIFAT[t.sifat] || t.sifat)}</span></div><div class="mono small muted">${esc(t.name)}</div></div></div>
+      <div class="tool-desc">${esc(t.description)}</div>
+      ${t.params.length ? `<div class="chips">${t.params.map(p => `<span class="chip ${p.required ? 'req' : ''}" title="${esc(p.description)}">${esc(p.name)}${p.required ? '*' : ''}: ${esc(p.type || 'any')}</span>`).join('')}</div>` : '<div class="small muted">Tanpa parameter</div>'}
+      <div class="tool-foot"><span class="small muted">${statTxt}</span>${t.uji ? `<button class="btn sm" type="button" data-test="${esc(t.name)}">Uji</button>` : ''}</div>
+    </div>`;
+  }).join('');
+  $$('#toolGrid [data-test]').forEach(b => b.onclick = () => openToolTest(b.dataset.test));
+
+  const auto = '<span class="pill ok">Otomatis</span>', blocked = '<span class="pill bad">Diblokir</span>';
+  $('#toolAccess').innerHTML = `<table><thead><tr><th>Tool</th><th>Mas Andika</th><th>Tamu</th></tr></thead><tbody>
+    <tr><td><b>Tool MCP joko</b><div class="small muted">${d.tools.length} tool di atas</div></td><td>${auto}</td><td>${d.guestMcpBlocked ? blocked : auto}</td></tr>
+    ${d.builtins.map(b => `<tr><td>${esc(b.label)}<div class="small muted mono">${esc(b.rule)}</div></td><td><span class="pill" title="Tidak diatur Joko; mengikuti aturan bawaan agy">Aturan agy</span></td><td>${b.guestBlocked ? blocked : '<span class="pill warn">Terbuka</span>'}</td></tr>`).join('')}
+  </tbody></table><p class="small muted" style="margin:10px 16px 14px">Tamu = anggota grup &amp; teman yang diberi akses. Permintaan tamu dijalankan di folder kosong sekali pakai.</p>`;
+
+  $('#toolRecent').innerHTML = d.recent.length ? `<table><thead><tr><th>Tool</th><th>Waktu</th><th>Status</th></tr></thead><tbody>${
+    d.recent.map(r => `<tr><td><span class="mono">${esc(r.name)}</span>${r.hint ? `<div class="small muted">${esc(r.hint)}</div>` : ''}</td>
+      <td class="small">${ago(r.t)}<div class="muted">${r.source === 'panel' ? 'uji panel' : 'agen'}${Number.isFinite(r.ms) ? ' · ' + tms(r.ms) : ''}</div></td>
+      <td>${r.ok ? '<span class="pill ok">Berhasil</span>' : `<span class="pill bad" title="${esc(r.error || '')}">Gagal</span>`}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">Belum ada pemanggilan tool tercatat. Pencatatan dimulai sejak fitur ini aktif.</div>';
+}
+$('#toolRefresh').onclick = async () => { await loadTools(true); toast('Daftar MCP diperbarui.'); };
+function openToolTest(name) {
+  const t = toolData?.tools.find(x => x.name === name);
+  if (!t) return;
+  testingTool = t;
+  $('#toolDlgTitle').textContent = 'Uji: ' + (t.label || t.name);
+  $('#toolDlgDesc').textContent = t.description;
+  $('#toolFields').innerHTML = t.params.length ? t.params.map(p => `<label class="f">${esc(p.name)}${p.required ? ' *' : ''}${p.description ? ` <span class="hint">${esc(p.description)}</span>` : ''}
+      ${p.type === 'integer' ? `<input type="number" data-p="${esc(p.name)}" data-t="integer" min="1" max="5">` : `<input type="text" data-p="${esc(p.name)}" ${p.name === 'url' ? 'inputmode="url" placeholder="https://…"' : ''}>`}</label>`).join('')
+    : '<p class="small muted" style="margin:0">Tool ini tidak butuh masukan.</p>';
+  $('#toolResult').innerHTML = '';
+  $('#toolRun').disabled = false;
+  $('#toolDlg').showModal();
+  ($('#toolFields input') || $('#toolRun')).focus();
+}
+$('#toolCancel').onclick = () => $('#toolDlg').close();
+$('#toolForm').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const args = {};
+  for (const i of $$('#toolFields [data-p]')) {
+    const v = i.value.trim();
+    if (v) args[i.dataset.p] = i.dataset.t === 'integer' ? +v : v;
+  }
+  const btn = $('#toolRun'); btn.disabled = true;
+  $('#toolResult').innerHTML = '<p class="small muted">Menjalankan…</p>';
+  try {
+    const r = await api('tools/test', { method: 'POST', body: { name: testingTool.name, args } });
+    $('#toolResult').innerHTML = `<div class="row" style="margin-bottom:8px">${r.ok ? '<span class="pill ok">Berhasil</span>' : '<span class="pill bad">Gagal</span>'}<span class="small muted">${tms(r.ms)}</span></div><pre class="tool-out">${esc(r.result)}</pre>`;
+    loadTools();
+  } catch (e) { $('#toolResult').innerHTML = `<p class="small" style="color:var(--bad)">${esc(e.message)}</p>`; }
   finally { btn.disabled = false; }
 });
 

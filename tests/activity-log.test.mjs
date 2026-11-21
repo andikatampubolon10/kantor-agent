@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createActivityLog, summarizeUsage, listConversations, conversationMessages, wibDay } from '../activity-log.mjs';
+import { createActivityLog, summarizeUsage, summarizeTools, listConversations, conversationMessages, wibDay } from '../activity-log.mjs';
 
 const NOW = Date.parse('2026-11-21T03:00:00Z'); // 10.00 WIB
 const H = 3600000;
@@ -62,4 +62,30 @@ test('daftar percakapan & linimasa urut waktu', () => {
   assert.equal(list[0].group, true);
   assert.equal(list[1].name, 'Budi');
   assert.deepEqual(conversationMessages(ev, 'a').map(e => e.t), [10, 20, 30]);
+});
+
+test('summarizeTools: statistik per tool & panggilan terakhir', () => {
+  const ev = [
+    { type: 'tool', t: NOW - 5000, name: 'cari_berita', ok: true, ms: 1200, source: 'agen', hint: 'AI' },
+    { type: 'tool', t: NOW - 4000, name: 'cari_berita', ok: false, ms: 300, error: 'topik wajib diisi', source: 'panel' },
+    { type: 'tool', t: NOW - 3000, name: 'buat_file', ok: true, ms: 4000 },
+    { type: 'agent', t: NOW - 2000, model: 'x', ok: true, ms: 9000 },
+    { type: 'msg', t: NOW - 1000, dir: 'in', chat: 'a', text: 'hai' }
+  ];
+  const s = summarizeTools(ev);
+  assert.equal(s.total, 3);
+  assert.equal(s.failed, 1);
+  assert.equal(s.stats.cari_berita.calls, 2);
+  assert.equal(s.stats.cari_berita.failed, 1);
+  assert.equal(s.stats.cari_berita.lastError, 'topik wajib diisi');
+  assert.equal(s.stats.cari_berita.avgMs, 750);
+  assert.equal(s.stats.cari_berita.lastAt, NOW - 4000);
+  assert.equal(s.stats.buat_file.medianMs, 4000);
+  assert.equal(s.recent[0].name, 'buat_file');
+  assert.equal(s.recent[0].source, 'agen');
+  assert.equal(s.recent[1].error, 'topik wajib diisi');
+  assert.equal(summarizeTools(ev, { recent: 1 }).recent.length, 1);
+  // kejadian tool tidak mengganggu ringkasan lain
+  assert.equal(summarizeUsage(ev, { days: 1, now: NOW }).totals.calls, 1);
+  assert.equal(listConversations(ev).length, 1);
 });

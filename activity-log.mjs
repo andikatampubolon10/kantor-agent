@@ -5,6 +5,7 @@
  *  - Jenis kejadian:
  *      agent: satu panggilan model { model, tier, reason, ms, ok, error, fallbackFrom, label, chat }
  *      msg:   pesan yang melibatkan Joko { dir: 'in'|'out', chat, name, text, media, file }
+ *      tool:  pemanggilan tool MCP Joko { name, ok, ms, error, source: agen|panel, hint }
  *    Hanya pesan yang MEMANGGIL Joko dan balasan Joko yang dicatat — obrolan biasa
  *    Mas Andika dengan orang lain tidak pernah masuk catatan ini.
  *  - Lokal saja (folder logs/ tidak masuk git) dan hanya dibaca panel admin.
@@ -129,6 +130,34 @@ export function summarizeUsage(events, { days = 7, now = Date.now() } = {}) {
     perDay: Object.values(perDay),
     models: modelList,
     topContacts: Object.values(contacts).sort((a, b) => b.count - a.count).slice(0, 8)
+  };
+}
+
+/**
+ * Ringkasan pemanggilan tool (kejadian type 'tool': { name, ok, ms, error, source, hint })
+ * untuk halaman Tools & MCP.
+ */
+export function summarizeTools(events, { recent = 30 } = {}) {
+  const byName = {};
+  const calls = events.filter(e => e.type === 'tool' && e.name);
+  for (const e of calls) {
+    const s = byName[e.name] ||= { name: e.name, calls: 0, ok: 0, failed: 0, ms: [], lastAt: 0, lastError: null };
+    s.calls++;
+    if (e.ok) s.ok++; else { s.failed++; if (e.t >= s.lastAt) s.lastError = e.error || null; }
+    if (Number.isFinite(e.ms)) s.ms.push(e.ms);
+    if (e.t > s.lastAt) s.lastAt = e.t;
+  }
+  const stats = Object.fromEntries(Object.values(byName).map(({ ms, ...s }) => [s.name, {
+    ...s,
+    avgMs: ms.length ? Math.round(ms.reduce((a, b) => a + b, 0) / ms.length) : 0,
+    medianMs: median(ms)
+  }]));
+  return {
+    total: calls.length,
+    failed: calls.filter(e => !e.ok).length,
+    stats,
+    recent: calls.sort((a, b) => b.t - a.t).slice(0, recent)
+      .map(({ t, name, ok, ms, error, source, hint }) => ({ t, name, ok: !!ok, ms, error: error || null, source: source || 'agen', hint: hint || '' }))
   };
 }
 

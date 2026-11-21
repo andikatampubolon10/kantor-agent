@@ -6,7 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createToolRunner, TOOL_DEFINITIONS, ToolInputError, MAX_TOOL_OUTPUT } from '../joko-tools.mjs';
+import { createToolRunner, TOOL_DEFINITIONS, ToolInputError, MAX_TOOL_OUTPUT, TOOL_PANEL_INFO, toolArgsHint, parseMcpList } from '../joko-tools.mjs';
 import { buildAgyCliArgs } from '../agy-cli.mjs';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -163,4 +163,32 @@ test('server MCP: Joko mati / token belum ada -> isError, tidak crash', async ()
   } finally {
     mcp.stop(); fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('TOOL_PANEL_INFO mencakup semua tool; hanya tool baca yang bisa diuji', () => {
+  assert.deepEqual(Object.keys(TOOL_PANEL_INFO).sort(), TOOL_DEFINITIONS.map(t => t.name).sort());
+  for (const [name, info] of Object.entries(TOOL_PANEL_INFO)) {
+    if (info.uji) assert.equal(info.sifat, 'baca', name);
+  }
+  assert.equal(TOOL_PANEL_INFO.buat_file.uji, false);
+  assert.equal(TOOL_PANEL_INFO.briefing_eksekutif.uji, false);
+});
+
+test('toolArgsHint: ringkas, tanpa isi dokumen', () => {
+  assert.equal(toolArgsHint('buat_file', { format: 'pdf', nama_file: 'rekap', isi: [{ jenis: 'paragraf', teks: 'rahasia' }] }), 'pdf · rekap');
+  assert.equal(toolArgsHint('cari_berita', { topik: '  AI   terbaru ' }), 'AI terbaru');
+  assert.equal(toolArgsHint('status_joko', {}), '');
+  assert.ok(toolArgsHint('baca_halaman_web', { url: 'https://x.id/' + 'a'.repeat(300) }).length <= 141);
+  assert.equal(toolArgsHint('x', null), '');
+});
+
+test('parseMcpList: tabel agy mcp list (perintah berspasi)', () => {
+  const cmd = String.raw`C:\Program Files\nodejs\node.exe D:\My Repo\joko-mcp-server.mjs`;
+  const out = parseMcpList(`NAME  TYPE   STATUS   COMMAND/URL\njoko  stdio  enabled  ${cmd}\r\ncari  http  disabled  https://mcp.example.com/sse\n\n`);
+  assert.deepEqual(out, [
+    { name: 'joko', type: 'stdio', status: 'enabled', command: cmd },
+    { name: 'cari', type: 'http', status: 'disabled', command: 'https://mcp.example.com/sse' }
+  ]);
+  assert.deepEqual(parseMcpList('No MCP servers configured.'), []);
+  assert.deepEqual(parseMcpList(''), []);
 });
