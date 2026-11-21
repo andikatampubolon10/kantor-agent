@@ -40,8 +40,10 @@ const TIMEOUT_MSG = (ms) => ms >= 60000
  * Di mode print, panggilan MCP tanpa izin ditolak otomatis (denied_actions: mcp).
  * Izin dibatasi per server: "mcp(<server>/*)" — diuji; "mcp(<server>:*)" tidak berlaku.
  */
-export function buildAgyCliArgs({ prompt, resumeId = null, timeoutMs, allowMcpServers = [] }) {
+export function buildAgyCliArgs({ prompt, resumeId = null, timeoutMs, allowMcpServers = [], model = null }) {
   const args = ['--output-format', 'json', '--print-timeout', `${Math.floor(timeoutMs / 1000)}s`];
+  // Model per panggilan (sesi yang sama boleh berganti model; konteks tetap terbawa).
+  if (model && /^[A-Za-z0-9._-]+$/.test(model)) args.push('--model', model);
   const servers = allowMcpServers.filter(s => /^[A-Za-z0-9_-]+$/.test(s));
   if (servers.length > 0) {
     args.push('--settings', JSON.stringify({ permissions: { allow: servers.map(s => `mcp(${s}/*)`) } }));
@@ -54,8 +56,8 @@ export function buildAgyCliArgs({ prompt, resumeId = null, timeoutMs, allowMcpSe
 /**
  * @returns {Promise<{ response: string, conversationId: string|null, resumed: boolean }>}
  */
-export async function runAgyCli({ agyPath, prompt, resumeId = null, timeoutMs = 10 * 60 * 1000, env = process.env, cwd = process.cwd(), allowMcpServers = [] }) {
-  const args = buildAgyCliArgs({ prompt, resumeId, timeoutMs, allowMcpServers });
+export async function runAgyCli({ agyPath, prompt, resumeId = null, timeoutMs = 10 * 60 * 1000, env = process.env, cwd = process.cwd(), allowMcpServers = [], model = null }) {
+  const args = buildAgyCliArgs({ prompt, resumeId, timeoutMs, allowMcpServers, model });
 
   let stdout = '';
   let stderr = '';
