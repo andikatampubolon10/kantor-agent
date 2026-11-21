@@ -77,7 +77,11 @@ import {
 import { runGuestPrompt, GuestAgentError } from './guest-agent.mjs';
 import { createAgentQueue } from './agent-queue.mjs';
 import { runAgyCli, runAgyCliLegacy, AgentTimeoutError } from './agy-cli.mjs';
-import { pickModel, fallbackModel } from './model-router.mjs';
+import {
+  pickModel, fallbackModel, effectiveModelConfig, setModelSettings, getModelSettings,
+  normalizeModelSettings, builtinTriggers, KNOWN_MODELS
+} from './model-router.mjs';
+import { createAdminPanel } from './admin-panel.mjs';
 import {
   checkMediaLimits,
   saveMediaToInbox,
@@ -110,7 +114,7 @@ import {
   getPairingInfo,
   closeBaileys
 } from './baileys-bridge.mjs';
-import { renderLinkPage } from './link-page.mjs';
+import { renderLinkPage, renderQrSvg } from './link-page.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -784,6 +788,7 @@ async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeT
     }, 35000);
   }
 
+  const runInfo = { at: Date.now(), model, tier: route.tier, reason: route.reason, persist: !!persist };
   try {
     const run = (m) => runAgyCli({ agyPath: AGY_PATH, prompt, resumeId, timeoutMs: OWNER_TASK_TIMEOUT_MS, env: agyEnv(), allowMcpServers: ['joko'], model: m });
     let result;
@@ -791,14 +796,17 @@ async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeT
     try {
       result = await run(model);
     } catch (err) {
-      // Model berat gagal (mis. kuota habis / model tidak tersedia): ulangi sekali dengan
-      // model ringan. Timeout TIDAK diulang (tugas sudah berjalan lama).
-      const light = fallbackModel();
-      if (!model || model === light || err instanceof AgentTimeoutError || err.code === 'AGY_LEGACY') throw err;
-      console.warn(`[Agent] ⚠️ Model ${model} gagal (${String(err.message).slice(0, 160)}). Mengulang dengan ${light}...`);
-      result = await run(light);
-      note = `\n\n_(Catatan: model Claude sedang tidak tersedia, jadi jawaban ini dikerjakan dengan Gemini Flash.)_`;
+      // Model utama gagal (mis. kuota habis / model tidak tersedia): ulangi sekali dengan
+      // model cadangan. Timeout TIDAK diulang (tugas sudah berjalan lama).
+      const backup = fallbackModel();
+      if (!backup || !model || model === backup || err instanceof AgentTimeoutError || err.code === 'AGY_LEGACY') throw err;
+      console.warn(`[Agent] ⚠️ Model ${model} gagal (${String(err.message).slice(0, 160)}). Mengulang dengan ${backup}...`);
+      runInfo.fallbackFrom = model;
+      runInfo.model = backup;
+      result = await run(backup);
+      note = `\n\n_(Catatan: model utama sedang tidak tersedia, jadi jawaban ini dikerjakan dengan model cadangan ${backup}.)_`;
     }
+    runInfo.ok = true;
     if (persist && result.conversationId) {
       if (resumeId && !result.resumed) {
         console.warn(`[Agent] ⚠️ Sesi ${resumeId} tidak ditemukan; CLI membuka sesi baru ${result.conversationId}.`);
@@ -809,14 +817,28 @@ async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeT
   } catch (err) {
     if (err.code === 'AGY_LEGACY') {
       console.warn(`[Agent] ⚠️ ${err.message} Memakai mode teks sekali jalan.`);
+      runInfo.reason += ' (mode teks lama)';
       const text = await runAgyCliLegacy({ agyPath: AGY_PATH, prompt: `${persona}\n\n${promptBody}`, timeoutMs: OWNER_TASK_TIMEOUT_MS, env: agyEnv() });
+      runInfo.ok = true;
       return cleanHumanResponse(text);
     }
     if (err instanceof AgentTimeoutError && err.partial) err.partial = cleanHumanResponse(err.partial);
+    runInfo.ok = false;
+    runInfo.error = err instanceof AgentTimeoutError ? 'timeout' : String(err.message || err).slice(0, 160);
     throw err;
   } finally {
     if (progressTimer) clearTimeout(progressTimer);
+    runInfo.ms = Date.now() - runInfo.at;
+    runInfo.ok = runInfo.ok === true;
+    recordAgentRun(runInfo);
   }
+}
+
+// Riwayat singkat panggilan agen (in-memory) untuk panel admin.
+const recentAgentRuns = [];
+function recordAgentRun(info) {
+  recentAgentRuns.unshift(info);
+  if (recentAgentRuns.length > 20) recentAgentRuns.length = 20;
 }
 
 /** Mode IDE (laptop Windows saat Antigravity IDE terbuka). */
@@ -1712,8 +1734,138 @@ async function handleToolsRequest(req, res) {
   }
 }
 
+// ==========================================
+// PANEL ADMIN (http://127.0.0.1:PORT/admin) — lihat admin-panel.mjs
+// ==========================================
+const SETTINGS_FILE = path.join(process.cwd(), '.joko-settings.json');
+const PROCESS_STARTED_AT = Date.now();
+const isSupervised = () => typeof process.send === 'function' && process.connected;
+
+function loadPanelSettings() {
+  const saved = readJsonFile(SETTINGS_FILE, {}, { validate: d => d && typeof d === 'object' });
+  try {
+    setModelSettings(saved.model || null);
+    if (saved.model) console.log(`[Admin] ⚙️ Pengaturan model dari panel dimuat (${pickModel('laporan').model} / ${pickModel('').model}).`);
+  } catch (err) {
+    console.warn(`[Admin] ⚠️ Pengaturan model di ${path.basename(SETTINGS_FILE)} tidak valid (${err.message}); memakai bawaan.`);
+    setModelSettings(null);
+  }
+}
+loadPanelSettings();
+
+function modelInfo() {
+  return {
+    known: KNOWN_MODELS,
+    saved: getModelSettings(),
+    effective: effectiveModelConfig(),
+    defaults: effectiveModelConfig({ settings: null }),
+    builtinTriggers: builtinTriggers()
+  };
+}
+
+// Mulai ulang lewat supervisor: tutup koneksi WA dengan rapi, lalu keluar (supervisor menyalakan lagi).
+let restarting = false;
+async function restartJoko(reason, beforeExit) {
+  if (restarting) throw Object.assign(new Error('Joko sedang dimulai ulang.'), { status: 409 });
+  if (!isSupervised()) throw new Error('Joko tidak berjalan di bawah supervisor, jadi tidak bisa dimulai ulang dari panel. Jalankan lewat start-wa-assistant.bat.');
+  restarting = true;
+  console.log(`[Admin] 🔄 Mulai ulang Joko (${reason})...`);
+  setTimeout(async () => {
+    try { await closeBaileys(); } catch {}
+    try { await beforeExit?.(); } catch (err) { console.error('[Admin] Gagal menyiapkan mulai ulang:', err.message); }
+    process.exit(0);
+  }, 400);
+}
+
+const adminPanel = createAdminPanel({
+  port: PORT,
+  tokenFile: path.join(process.cwd(), '.joko-admin-token'),
+  logDir: path.join(process.cwd(), 'logs'),
+  getStatus: () => {
+    const b = getBaileysStatus();
+    const p = getPairingInfo();
+    const mem = process.memoryUsage();
+    return {
+      joko: {
+        asleep: getJokoState().isAsleep,
+        pid: process.pid,
+        startedAt: PROCESS_STARTED_AT,
+        uptimeSec: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
+        memoryMb: Math.round(mem.rss / 1048576),
+        node: process.version,
+        supervised: isSupervised(),
+        restarting,
+        agentMode: process.env.JOKO_AGENT_MODE === 'ide' ? 'Antigravity IDE' : 'Antigravity CLI'
+      },
+      whatsapp: {
+        ready: b.ready,
+        connecting: b.isConnecting,
+        number: b.user?.id?.split(':')[0]?.split('@')[0] || null,
+        name: b.user?.name || null,
+        sessionHealthy: b.sessionHealthy,
+        lastInboundAt: b.lastInboundAt,
+        lastDecryptFailAt: b.lastDecryptFailAt,
+        pairingPending: !b.ready && !!(p.code || p.qr)
+      },
+      queue: getAgentQueueStatus(),
+      model: effectiveModelConfig(),
+      recentRuns: recentAgentRuns,
+      jobs: loadJobs().map(j => ({ id: j.id, title: j.title, type: j.type, time: j.config?.time || null, lastRun: j.lastRun || null, totalRuns: j.totalRuns || 0 })),
+      now: Date.now()
+    };
+  },
+  getPairing: () => {
+    const b = getBaileysStatus();
+    const p = getPairingInfo();
+    return { ready: b.ready, code: p.code, codeAt: p.codeAt, qrSvg: p.qr ? renderQrSvg(p.qr, 260) : null, qrAt: p.qrAt, now: Date.now() };
+  },
+  getModelInfo: modelInfo,
+  saveModelSettings: (input) => {
+    const model = input ? normalizeModelSettings(input) : null;
+    const saved = readJsonFile(SETTINGS_FILE, {}, { validate: d => d && typeof d === 'object' });
+    if (model) saved.model = model; else delete saved.model;
+    saved.updatedAt = new Date().toISOString();
+    writeJsonAtomic(SETTINGS_FILE, saved);
+    setModelSettings(model);
+    const cfg = effectiveModelConfig();
+    console.log(`[Admin] ⚙️ Pengaturan model ${model ? 'disimpan' : 'dikembalikan ke bawaan'}: berat ${cfg.heavy}, ringan ${cfg.light}, mode ${cfg.routing}, cadangan ${cfg.fallbackEnabled ? cfg.fallback : 'mati'}.`);
+  },
+  testRoute: (text, draft) => pickModel(text, draft ? { settings: normalizeModelSettings(draft) } : {}),
+  actions: {
+    'test-send': async () => {
+      if (!getBaileysStatus().ready) throw new Error('WhatsApp belum terhubung.');
+      await sendBaileysMessage('6282163850914', `🤖 [TES DARI PANEL ADMIN] Halo Mas Andika! Jalur kirim Joko normal. Jam: ${new Date().toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB`);
+      console.log('[Admin] ✅ Pesan tes dikirim ke owner.');
+      return { message: 'Pesan tes terkirim ke WhatsApp Mas Andika.' };
+    },
+    sleep: async (body) => {
+      const asleep = body?.asleep === true;
+      setJokoState(asleep);
+      console.log(`[Admin] ${asleep ? '💤 Joko ditidurkan' : '☀️ Joko dibangunkan'} dari panel.`);
+      return { asleep, message: asleep ? 'Joko sekarang tidur (hanya merespons perintah bangun).' : 'Joko sudah bangun.' };
+    },
+    restart: async () => {
+      await restartJoko('diminta dari panel');
+      return { message: 'Joko dimulai ulang. Panel tersambung lagi dalam beberapa detik.' };
+    },
+    relink: async (body) => {
+      if (String(body?.confirm || '').trim().toUpperCase() !== 'TAUTKAN') throw new Error('Ketik TAUTKAN untuk konfirmasi.');
+      const authDir = path.join(process.cwd(), 'baileys_auth_info');
+      const stamp = new Date(Date.now() + 7 * 3600000).toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
+      const backupDir = path.join(process.cwd(), `baileys_auth_backup_${stamp}`);
+      await restartJoko('tautkan ulang WhatsApp', () => {
+        if (fs.existsSync(authDir)) fs.renameSync(authDir, backupDir);
+        try { fs.unlinkSync(path.join(process.cwd(), 'pairing-code.txt')); } catch {}
+        console.log(`[Admin] 🔗 Sesi WhatsApp lama dicadangkan ke ${path.basename(backupDir)}; kode tautan baru dibuat setelah mulai ulang.`);
+      });
+      return { message: 'Sesi lama dicadangkan. Kode tautan baru muncul di Beranda dalam ±15 detik.' };
+    }
+  }
+});
+
 // Setup HTTP Server lokal (Status Health-Check & endpoint /test-send, diakses via SSH ke 127.0.0.1)
 const server = http.createServer(async (req, res) => {
+  if (await adminPanel(req, res)) return;
   if (req.url?.startsWith('/tools/')) {
     await handleToolsRequest(req, res).catch(err => {
       console.error('[Tools] Error:', err.message);

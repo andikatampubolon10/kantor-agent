@@ -42,3 +42,7 @@ wa-qr.txt
 # lampiran gambar/voice note dari WhatsApp (dihapus otomatis setelah 24 jam)
 media-inbox/
 media-outbox/
+# panel admin: token login & pengaturan lokal; cadangan sesi WhatsApp (rahasia)
+.joko-admin-token
+.joko-settings.json
+baileys_auth_backup_*/

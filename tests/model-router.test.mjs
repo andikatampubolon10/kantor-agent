@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pickModel, fallbackModel, DEFAULT_HEAVY_MODEL, DEFAULT_LIGHT_MODEL } from '../model-router.mjs';
+import {
+  pickModel, fallbackModel, DEFAULT_HEAVY_MODEL, DEFAULT_LIGHT_MODEL,
+  normalizeModelSettings, effectiveModelConfig, builtinTriggers
+} from '../model-router.mjs';
 import { buildAgyCliArgs } from '../agy-cli.mjs';
 
 const env = {};
@@ -48,6 +51,25 @@ test('model bisa diatur lewat env & routing bisa dimatikan', () => {
   assert.equal(pickModel('halo', { env: custom }).model, 'gemini-3.8-flash-low');
   assert.equal(pickModel('buat laporan PDF', { env: { JOKO_MODEL_ROUTING: 'off' } }).model, DEFAULT_LIGHT_MODEL);
   assert.equal(fallbackModel({}), DEFAULT_LIGHT_MODEL);
+});
+
+test('pengaturan panel menang atas env, kata pemicu tambahan & mode', () => {
+  const settings = normalizeModelSettings({ heavy: 'claude-sonnet-4-6', routing: 'otomatis', extraHeavy: 'Anggaran\nrencana kerja, anggaran', fallbackEnabled: false });
+  assert.deepEqual(settings.extraHeavy, ['anggaran', 'rencana kerja']);
+  assert.equal(pickModel('buat laporan', { env: { JOKO_MODEL_HEAVY: 'claude-opus-4-6-thinking' }, settings }).model, 'claude-sonnet-4-6');
+  const r = pickModel('tolong susun Rencana Kerja minggu depan', { env, settings });
+  assert.equal(r.tier, 'berat');
+  assert.match(r.reason, /rencana kerja/);
+  assert.equal(pickModel('anggarannya berapa', { env, settings }).tier, 'ringan'); // kata utuh
+  assert.equal(pickModel('halo', { env, settings: { routing: 'berat' } }).tier, 'berat');
+  assert.equal(pickModel('buat PDF', { env, settings: { routing: 'ringan' } }).tier, 'ringan');
+  assert.equal(fallbackModel(env, settings), null);
+  assert.equal(fallbackModel(env, { fallback: 'gemini-3.8-flash-low' }), 'gemini-3.8-flash-low');
+  assert.equal(effectiveModelConfig({ env, settings: null }).source, 'env/bawaan');
+  assert.throws(() => normalizeModelSettings({ heavy: 'x; rm -rf /' }), /tidak valid/);
+  assert.throws(() => normalizeModelSettings({ routing: 'acak' }), /routing/);
+  assert.throws(() => normalizeModelSettings({ extraHeavy: ['a(b'] }), /pemicu/);
+  assert.ok(builtinTriggers().laporan.includes('rekap(an)'));
 });
 
 test('argumen CLI --model hanya untuk nama model yang valid', () => {
