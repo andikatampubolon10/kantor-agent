@@ -664,6 +664,13 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
   while (Date.now() - startTime < maxWaitMs) {
     await new Promise(resolve => setTimeout(resolve, pollInterval));
 
+    // Batas hening juga berlaku bila sesi tidak menulis langkah baru SAMA SEKALI
+    // (mis. tertahan dialog persetujuan di IDE); tanpa ini Joko diam hingga 10 menit.
+    if (Date.now() - lastActiveTime > idleTimeoutMs) {
+      console.warn(`[Agent] ⚠️ Tidak ada aktivitas step baru dari Joko selama ${idleTimeoutMs / 1000} detik.`);
+      break;
+    }
+
     const steps = readTranscript(conversationId);
     if (!steps || steps.length === 0) continue;
 
@@ -729,11 +736,6 @@ async function waitForAgentResponse(conversationId, startStepIndex = 0, maxWaitM
       }
     }
 
-    // Hanya hentikan jika Joko benar-benar berhenti beraktivitas (idle tanpa step baru selama 3 menit penuh)
-    if (Date.now() - lastActiveTime > idleTimeoutMs) {
-      console.warn(`[Agent] ⚠️ Tidak ada aktivitas step baru dari Joko selama ${idleTimeoutMs / 1000} detik.`);
-      break;
-    }
   }
 
   if (candidateContent) {
@@ -832,7 +834,17 @@ async function askAgyIde(promptBody, { persona, persist, targetRecipient, sender
     }
   }
 
-  return await waitForAgentResponse(conversationId, startStepIndex, OWNER_TASK_TIMEOUT_MS, targetRecipient, senderName);
+  try {
+    return await waitForAgentResponse(conversationId, startStepIndex, OWNER_TASK_TIMEOUT_MS, targetRecipient, senderName);
+  } catch (err) {
+    // Sesi yang hening (biasanya tertahan dialog persetujuan) akan menahan SEMUA pesan
+    // berikutnya; lepaskan supaya pesan selanjutnya membuka sesi baru.
+    if (persist && err instanceof AgentTimeoutError) {
+      console.warn(`[Agent] Sesi IDE ${conversationId} dilepas; pesan berikutnya memakai sesi baru.`);
+      clearSession();
+    }
+    throw err;
+  }
 }
 
 /**
@@ -842,7 +854,11 @@ async function askAgyIde(promptBody, { persona, persist, targetRecipient, sender
  * Persona hanya disertakan saat membuka percakapan baru.
  */
 async function askAgy(promptBody, { persona = SYSTEM_PERSONA, persist = true, targetRecipient = null, senderName = '' } = {}) {
-  const creds = process.platform === 'linux' ? null : getAntigravityCredentials();
+  // Bawaan: mode CLI (agy -p) — headless, izin diatur di muka, tidak pernah menunggu klik.
+  // Mode IDE (agentapi) bisa tertahan selamanya pada dialog persetujuan (mis. write_file)
+  // yang hanya bisa diklik di layar laptop, jadi hanya dipakai bila diminta: JOKO_AGENT_MODE=ide.
+  const wantIde = process.platform !== 'linux' && process.env.JOKO_AGENT_MODE === 'ide';
+  const creds = wantIde ? getAntigravityCredentials() : null;
   return creds
     ? askAgyIde(promptBody, { persona, persist, targetRecipient, senderName })
     : askAgyCli(promptBody, { persona, persist, targetRecipient });
@@ -1783,11 +1799,15 @@ server.listen(PORT, '127.0.0.1', async () => {
   console.log(`🚀 Asisten WhatsApp "JOKO" aktif di port ${PORT}`);
   console.log(`📱 Owner Whitelist: ${Array.from(AUTHORIZED_TARGETS).join(', ')}`);
   console.log(`💤 Status Awal: ${curState.isAsleep ? 'TIDUR (Sleep Mode)' : 'BANGUN (Awake Mode)'}`);
-  const creds = getAntigravityCredentials();
-  if (creds) {
-    console.log(`🔌 Antigravity IDE: TERHUBUNG (${creds.address})`);
+  if (process.env.JOKO_AGENT_MODE === 'ide') {
+    const creds = getAntigravityCredentials();
+    if (creds) {
+      console.log(`🔌 Agen: Antigravity IDE (${creds.address}) — persetujuan tool harus diklik di laptop`);
+    } else {
+      console.warn(`⚠️ Agen: mode IDE diminta tapi Antigravity IDE tidak terdeteksi; memakai CLI`);
+    }
   } else {
-    console.warn(`⚠️ Antigravity IDE: TIDAK TERDETEKSI (Pastikan aplikasi Antigravity IDE dibuka)`);
+    console.log(`🤖 Agen: Antigravity CLI (headless, tanpa dialog persetujuan)`);
   }
   console.log(`🗣️ Panggilan Nama: "Joko", "!joko", "Joko bantu dong", "Joko lu bisa tidur"`);
   console.log(`====================================================`);
