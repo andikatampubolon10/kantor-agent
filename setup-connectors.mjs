@@ -5,7 +5,7 @@
  *
  *   node setup-connectors.mjs list
  *   node setup-connectors.mjs add google       (butuh env JOKO_GOOGLE_CLIENT_ID & JOKO_GOOGLE_CLIENT_SECRET)
- *   node setup-connectors.mjs add canva
+ *   node setup-connectors.mjs add canva        (butuh env JOKO_CANVA_CLIENT_ID & JOKO_CANVA_CLIENT_SECRET)
  *   node setup-connectors.mjs add perplexity   (butuh env JOKO_PERPLEXITY_API_KEY)
  *   node setup-connectors.mjs remove <google|canva|perplexity|gmail|drive|calendar>
  *
@@ -25,9 +25,10 @@ try {
   if (cmd === 'add') {
     const ids = idsOf(target);
     if (!ids.length) throw new ConnectorError('Sebutkan: google, canva, atau perplexity.');
+    const isCanva = target === 'canva';
     const secrets = {
-      clientId: process.env.JOKO_GOOGLE_CLIENT_ID,
-      clientSecret: process.env.JOKO_GOOGLE_CLIENT_SECRET,
+      clientId: isCanva ? process.env.JOKO_CANVA_CLIENT_ID : process.env.JOKO_GOOGLE_CLIENT_ID,
+      clientSecret: isCanva ? process.env.JOKO_CANVA_CLIENT_SECRET : process.env.JOKO_GOOGLE_CLIENT_SECRET,
       apiKey: process.env.JOKO_PERPLEXITY_API_KEY
     };
     const entries = Object.fromEntries(ids.map(id => [id, connectorEntry(id, secrets)]));

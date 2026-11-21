@@ -51,7 +51,16 @@ switch ($pick) {
     Show-Login 'gmail, drive, calendar'
   }
   '2' {
-    Invoke-Setup @('add', 'canva')
+    Write-Host ''
+    Write-Host 'Siapkan dulu di https://www.canva.com/developers/apps (sekali saja):' -ForegroundColor Yellow
+    Write-Host '  a. Create an app > Outside Canva > Start integrating.'
+    Write-Host '  b. Configuration > Integration methods: nyalakan "Canva MCP".'
+    Write-Host '  c. Redirect URLs: https://antigravity.google/oauth-callback'
+    Write-Host '  d. Credentials: salin Client ID, klik Generate secret (hanya tampil sekali).'
+    Write-Host ''
+    $env:JOKO_CANVA_CLIENT_ID = (Read-Host 'Canva Client ID').Trim()
+    $env:JOKO_CANVA_CLIENT_SECRET = Read-Secret 'Canva client secret (tidak terlihat saat diketik)'
+    try { Invoke-Setup @('add', 'canva') } finally { Remove-Item Env:JOKO_CANVA_CLIENT_SECRET, Env:JOKO_CANVA_CLIENT_ID -ErrorAction SilentlyContinue }
     Show-Login 'canva'
   }
   '3' {

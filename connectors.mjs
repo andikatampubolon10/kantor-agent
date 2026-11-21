@@ -42,12 +42,13 @@ export const CONNECTORS = Object.freeze([
     safety: 'Menghapus acara dan membalas undangan diblokir.'
   },
   {
+    // Jalur resmi untuk klien buatan sendiri (canva.dev, GA Okt 2026): aplikasi Developer Portal
+    // dengan "Canva MCP" aktif -> Client ID + secret. Tidak ada tool hapus.
     id: 'canva', label: 'Canva', group: 'canva', kind: 'http',
-    url: 'https://mcp.canva.com/mcp', auth: 'oauth',
-    deny: [],
-    experimental: true,
-    summary: 'Cari & buat desain Canva dari template, ekspor desain.',
-    safety: 'Akses mengikuti hak akun Canva Mas Andika.'
+    url: 'https://api.canva.com/connect/v1/mcp', auth: 'oauth-client',
+    deny: ['publish-brand-template'],
+    summary: 'Cari, buat, edit & ekspor desain Canva; buat gambar dari teks.',
+    safety: 'Akses mengikuti hak akun Canva Mas Andika. Menerbitkan brand template ke tim diblokir.'
   },
   {
     id: 'perplexity', label: 'Perplexity', group: 'perplexity', kind: 'stdio',
@@ -90,6 +91,13 @@ export function connectorEntry(id, secrets = {}, { platform = process.platform }
     const clientSecret = String(secrets.clientSecret || '').trim();
     if (!/^[\w.-]+\.apps\.googleusercontent\.com$/.test(clientId)) throw new ConnectorError('Client ID Google tidak valid (harus berakhiran .apps.googleusercontent.com).');
     if (clientSecret.length < 10) throw new ConnectorError('Client secret Google kosong/terlalu pendek.');
+    return { disabled: false, serverUrl: c.url, oauth: { clientId, clientSecret } };
+  }
+  if (c.auth === 'oauth-client') {
+    const clientId = String(secrets.clientId || '').trim();
+    const clientSecret = String(secrets.clientSecret || '').trim();
+    if (!/^[\w-]{6,128}$/.test(clientId)) throw new ConnectorError('Client ID tidak valid.');
+    if (clientSecret.length < 10 || /\s/.test(clientSecret)) throw new ConnectorError('Client secret kosong/tidak valid.');
     return { disabled: false, serverUrl: c.url, oauth: { clientId, clientSecret } };
   }
   if (c.auth === 'oauth') return { disabled: false, serverUrl: c.url };
@@ -193,7 +201,7 @@ export function connectorStatus({ config, cacheDir, allowed = {} }) {
     const entry = servers[c.id];
     const cache = entry ? cachedTools(cacheDir, c.id) : null;
     const credentials = !entry ? false
-      : c.auth === 'google-oauth' ? !!entry.oauth?.clientId && !!entry.oauth?.clientSecret
+      : c.auth === 'google-oauth' || c.auth === 'oauth-client' ? !!entry.oauth?.clientId && !!entry.oauth?.clientSecret
       : c.auth === 'api-key' ? !!entry.env?.[c.envKey]
       : true;
     return {

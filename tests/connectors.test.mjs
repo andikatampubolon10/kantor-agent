@@ -21,8 +21,11 @@ test('connectorEntry: Google memakai serverUrl + oauth; input salah ditolak', ()
   assert.throws(() => connectorEntry('jahat', {}), ConnectorError);
 });
 
-test('connectorEntry: Canva tanpa rahasia; Perplexity lewat npx versi terkunci + env', () => {
-  assert.deepEqual(connectorEntry('canva'), { disabled: false, serverUrl: 'https://mcp.canva.com/mcp' });
+test('connectorEntry: Canva lewat aplikasi Developer Portal; Perplexity lewat npx versi terkunci + env', () => {
+  const canva = { clientId: 'OC-AZabc123XYZ', clientSecret: 'cnvca-rahasia-panjang' };
+  assert.deepEqual(connectorEntry('canva', canva), { disabled: false, serverUrl: 'https://api.canva.com/connect/v1/mcp', oauth: canva });
+  assert.throws(() => connectorEntry('canva', {}), ConnectorError);
+  assert.throws(() => connectorEntry('canva', { ...canva, clientId: 'ada spasi' }), ConnectorError);
   const key = 'pplx-' + 'x'.repeat(40);
   const win = connectorEntry('perplexity', { apiKey: key }, { platform: 'win32' });
   assert.equal(win.command, 'cmd');
@@ -36,7 +39,7 @@ test('connectorEntry: Canva tanpa rahasia; Perplexity lewat npx versi terkunci +
 
 test('withConnectors/withoutConnectors tidak menyentuh server lain', () => {
   const base = { mcpServers: { joko: { command: 'node', args: ['x.mjs'] } }, lain: 1 };
-  const added = withConnectors(base, { gmail: connectorEntry('gmail', GOOGLE), canva: connectorEntry('canva') });
+  const added = withConnectors(base, { gmail: connectorEntry('gmail', GOOGLE), canva: connectorEntry('canva', { clientId: 'OC-AZabc123XYZ', clientSecret: 'cnvca-rahasia-panjang' }) });
   assert.deepEqual(Object.keys(added.mcpServers).sort(), ['canva', 'gmail', 'joko']);
   assert.equal(added.lain, 1);
   assert.equal(Object.keys(base.mcpServers).length, 1, 'objek asal tidak berubah');
@@ -86,7 +89,7 @@ test('cachedTools & connectorStatus: terpasang, login, izin — tanpa membocorka
 test('ownerMcpPermissions: hanya connector terpasang & diizinkan; tool berisiko selalu ditolak', () => {
   const p = ownerMcpPermissions({ base: ['joko'], allowed: { calendar: true, gmail: true, canva: true }, installed: ['joko', 'calendar', 'canva'] });
   assert.deepEqual(p.servers, ['joko', 'calendar', 'canva']);
-  assert.deepEqual(p.deny, ['mcp(calendar/delete_event)', 'mcp(calendar/respond_to_event)']);
+  assert.deepEqual(p.deny, ['mcp(calendar/delete_event)', 'mcp(calendar/respond_to_event)', 'mcp(canva/publish-brand-template)']);
   assert.deepEqual(ownerMcpPermissions({ base: ['joko'], allowed: {}, installed: ['calendar'] }), { servers: ['joko'], deny: [] });
 });
 
