@@ -1709,7 +1709,7 @@ async function loadTools(refresh = false) {
     : srv.length ? `<table><thead><tr><th>Server</th><th>Status</th><th>Agen owner</th></tr></thead><tbody>${
       srv.map(x => `<tr><td><b class="mono">${esc(x.name)}</b> <span class="tag">${esc(x.type)}</span><div class="cmd" style="margin-top:4px">${esc(x.command)}</div></td>
         <td>${x.status === 'enabled' ? '<span class="pill ok">Aktif</span>' : `<span class="pill">${esc(x.status)}</span>`}</td>
-        <td>${x.ownerAllowed ? '<span class="pill ok">Otomatis</span>' : '<span class="pill warn" title="Di mode WhatsApp tidak ada yang bisa menyetujui, jadi panggilan ditolak">Ditolak</span>'}</td></tr>`).join('')}</tbody></table>`
+        <td>${x.ownerAllowed ? '<span class="pill ok">Otomatis</span>' : '<span class="pill warn" title="Agen Joko tidak memakai server ini. Untuk connector, nyalakan Izinkan di kartu Connector di bawah.">Belum diizinkan</span>'}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">Belum ada server MCP terdaftar. Jalankan <code>npm run setup-mcp</code>.</div>';
   $('#mcpEndpoint').innerHTML = `Server <b>joko</b> meneruskan panggilan ke <code>${esc(d.endpoint.url)}</code> · token ${d.endpoint.tokenReady ? '<span class="pill ok">siap</span>' : '<span class="pill bad">belum ada</span>'}`;
   renderConnectors(d.connectors || []);
