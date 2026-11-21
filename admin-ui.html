@@ -629,6 +629,10 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
         <p class="small muted" id="mcpEndpoint" style="margin:12px 0 0"></p>
       </div>
       <div class="card" style="margin-top:16px">
+        <div class="stat-top"><h2 style="margin:0">Connector</h2><span class="small muted">pasang lewat <code>pasang-connector.bat</code> di laptop</span></div>
+        <div class="tool-grid" id="connGrid"></div>
+      </div>
+      <div class="card" style="margin-top:16px">
         <div class="stat-top"><h2 style="margin:0">Tool Joko</h2><span class="small muted">statistik 7 hari terakhir</span></div>
         <div class="tool-grid" id="toolGrid"></div>
       </div>
@@ -1649,6 +1653,44 @@ $('#jobForm').addEventListener('submit', async (ev) => {
 
 // ---------- Tools & MCP ----------
 let toolData = null, testingTool = null;
+const CONN_TONE = { gmail: 't-rose', drive: 't-green', calendar: 't-sky', canva: 't-violet', perplexity: 't-coral', notebooklm: 't-amber' };
+const CONN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 7V3M15 7V3M7 7h10v4a5 5 0 0 1-10 0zM12 16v5"/></svg>';
+function connState(c) {
+  if (!c.available) return ['', 'Belum tersedia'];
+  if (!c.installed) return ['', 'Belum dipasang'];
+  if (c.disabled) return ['warn', 'Dimatikan'];
+  if (!c.credentials) return ['bad', 'Kunci kosong'];
+  if (!c.connected) return ['warn', 'Perlu login'];
+  return ['ok', `Tersambung · ${c.tools.length} tool`];
+}
+function renderConnectors(list) {
+  $('#connGrid').innerHTML = list.map(c => {
+    const [tone, label] = connState(c);
+    const tools = c.tools.slice(0, 12).map(t => `<span class="chip ${c.blocked.includes(t.name) ? '' : 'req'}" title="${esc(t.description)}" ${c.blocked.includes(t.name) ? 'style="text-decoration:line-through"' : ''}>${esc(t.name)}</span>`).join('');
+    const more = c.tools.length > 12 ? `<span class="chip">+${c.tools.length - 12}</span>` : '';
+    const blocked = c.blocked.length ? `<div class="small" style="color:var(--bad)">Diblokir: <span class="mono">${c.blocked.map(esc).join(', ')}</span></div>` : '';
+    const hint = !c.available ? '' : !c.installed ? 'Jalankan <code>pasang-connector.bat</code> di laptop.'
+      : !c.connected ? 'Login dulu: <code>pasang-connector.bat</code> → pilih 4, lalu <code>/mcp</code>.'
+      : c.lastConnectedAt ? `Terakhir tersambung ${ago(c.lastConnectedAt)}` : '';
+    return `<div class="tool">
+      <div class="tool-head"><span class="ti ${CONN_TONE[c.id] || ''}">${CONN_ICON}</span>
+        <div style="min-width:0;flex:1"><div class="t">${esc(c.label)}${c.experimental ? ' <span class="tag">uji coba</span>' : ''}</div><span class="pill ${tone}" style="margin-top:4px">${esc(label)}</span></div></div>
+      <div class="tool-desc">${esc(c.summary)}</div>
+      <div class="small muted">${esc(c.safety)}</div>
+      ${tools || more ? `<div class="chips">${tools}${more}</div>` : ''}
+      ${blocked}
+      <div class="tool-foot"><span class="small muted">${hint}</span>
+        ${c.available ? `<label class="switch small" title="${c.installed ? '' : 'Pasang dulu connector ini'}"><input type="checkbox" data-conn="${esc(c.id)}" ${c.allowed ? 'checked' : ''} ${c.installed || c.allowed ? '' : 'disabled'} aria-label="Izinkan ${esc(c.label)} untuk Joko">Izinkan</label>` : ''}</div>
+    </div>`;
+  }).join('');
+  $$('#connGrid [data-conn]').forEach(cb => cb.onchange = async () => {
+    try {
+      await api('connectors/allow', { method: 'POST', body: { id: cb.dataset.conn, allowed: cb.checked } });
+      toast(cb.checked ? 'Connector diizinkan. Berlaku untuk tugas berikutnya.' : 'Connector tidak lagi dipakai Joko.');
+    } catch (e) { toast(e.message, true); cb.checked = !cb.checked; }
+    loadTools();
+  });
+}
 const tms = (v) => v < 1000 ? `${Math.round(v)} md` : ms(v);
 const SIFAT = { baca: 'Hanya baca', tulis: 'Membuat file', berat: 'Proses panjang' };
 async function loadTools(refresh = false) {
@@ -1670,6 +1712,7 @@ async function loadTools(refresh = false) {
         <td>${x.ownerAllowed ? '<span class="pill ok">Otomatis</span>' : '<span class="pill warn" title="Di mode WhatsApp tidak ada yang bisa menyetujui, jadi panggilan ditolak">Ditolak</span>'}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">Belum ada server MCP terdaftar. Jalankan <code>npm run setup-mcp</code>.</div>';
   $('#mcpEndpoint').innerHTML = `Server <b>joko</b> meneruskan panggilan ke <code>${esc(d.endpoint.url)}</code> · token ${d.endpoint.tokenReady ? '<span class="pill ok">siap</span>' : '<span class="pill bad">belum ada</span>'}`;
+  renderConnectors(d.connectors || []);
 
   $('#toolGrid').innerHTML = d.tools.map(t => {
     const st = t.stats;

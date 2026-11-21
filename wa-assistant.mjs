@@ -89,6 +89,14 @@ import {
   normalizeModelSettings, builtinTriggers, KNOWN_MODELS
 } from './model-router.mjs';
 import { createAdminPanel } from './admin-panel.mjs';
+import {
+  connectorStatus,
+  normalizeConnectorSettings,
+  ownerMcpPermissions,
+  readMcpConfig,
+  defaultMcpConfigPath,
+  defaultMcpCacheDir
+} from './connectors.mjs';
 import { createSkillStore } from './skill-store.mjs';
 import { createTailscaleAccess } from './tailscale-access.mjs';
 import { createActivityLog, summarizeUsage, summarizeTools, listConversations, conversationMessages } from './activity-log.mjs';
@@ -822,7 +830,8 @@ async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeT
 
   const runInfo = { at: Date.now(), model, tier: route.tier, reason: route.reason, persist: !!persist, chat: targetRecipient ? chatKey(targetRecipient) : (label || null), label: label || (persist ? 'owner' : 'jadwal') };
   try {
-    const run = (m) => runAgyCli({ agyPath: AGY_PATH, prompt, resumeId, timeoutMs: OWNER_TASK_TIMEOUT_MS, env: agyEnv(), allowMcpServers: OWNER_MCP_ALLOW, model: m });
+    const perm = ownerMcp();
+    const run = (m) => runAgyCli({ agyPath: AGY_PATH, prompt, resumeId, timeoutMs: OWNER_TASK_TIMEOUT_MS, env: agyEnv(), allowMcpServers: perm.servers, denyMcpTools: perm.deny, model: m });
     let result;
     let note = '';
     try {
@@ -1812,6 +1821,26 @@ function loadPanelSettings() {
     console.warn(`[Admin] ⚠️ Pengaturan model di ${path.basename(SETTINGS_FILE)} tidak valid (${err.message}); memakai bawaan.`);
     setModelSettings(null);
   }
+  connectorSettings = normalizeConnectorSettings(saved.connectors);
+  const on = Object.keys(connectorSettings);
+  if (on.length) console.log(`[Admin] 🔌 Connector diizinkan: ${on.join(', ')}.`);
+}
+
+// Connector MCP luar (lihat connectors.mjs). Izin per connector diatur dari panel.
+let connectorSettings = {};
+const MCP_CONFIG_FILE = process.env.JOKO_MCP_CONFIG || defaultMcpConfigPath();
+const MCP_CACHE_DIR = defaultMcpCacheDir();
+function readMcpConfigSafe() {
+  try { return readMcpConfig(MCP_CONFIG_FILE); } catch (err) {
+    console.warn(`[Connector] ⚠️ ${path.basename(MCP_CONFIG_FILE)} tidak terbaca: ${err.message}`);
+    return { mcpServers: {} };
+  }
+}
+/** Izin MCP agen owner: server joko + connector yang terpasang & diizinkan; tool berisiko ditolak. */
+function ownerMcp() {
+  const servers = readMcpConfigSafe().mcpServers;
+  const installed = Object.keys(servers).filter(k => servers[k]?.disabled !== true);
+  return ownerMcpPermissions({ base: OWNER_MCP_ALLOW, allowed: connectorSettings, installed });
 }
 loadPanelSettings();
 
@@ -1939,7 +1968,7 @@ async function mcpServers(force = false) {
   let data;
   try {
     const { stdout } = await execFileAsync(AGY_PATH, ['mcp', 'list'], { windowsHide: true, timeout: 20000, maxBuffer: 1024 * 1024 });
-    data = { ok: true, items: parseMcpList(stdout).map(s => ({ ...s, ownerAllowed: OWNER_MCP_ALLOW.includes(s.name) })) };
+    data = { ok: true, items: parseMcpList(stdout) };
   } catch (err) {
     data = { ok: false, items: [], error: `agy mcp list gagal: ${String(err.stderr || err.message).trim().slice(0, 200)}` };
   }
@@ -1958,14 +1987,35 @@ const BUILTIN_TOOLS = [
 ];
 
 const panelExtra = {
+  // Connector (Google, Canva, Perplexity): izinkan/larang untuk agen owner
+  'POST connectors/allow': ({ body }) => {
+    const id = String(body.id || '');
+    const c = connectorStatus({ config: readMcpConfigSafe(), cacheDir: MCP_CACHE_DIR, allowed: connectorSettings }).find(x => x.id === id);
+    if (!c || !c.available) throw Object.assign(new Error('Connector tidak dikenal.'), { status: 400 });
+    const allow = body.allowed === true;
+    if (allow && !c.installed) throw Object.assign(new Error(`${c.label} belum dipasang. Jalankan pasang-connector.bat di laptop.`), { status: 400 });
+    const next = { ...connectorSettings };
+    if (allow) next[id] = true; else delete next[id];
+    const saved = readJsonFile(SETTINGS_FILE, {}, { validate: d => d && typeof d === 'object' });
+    saved.connectors = normalizeConnectorSettings(next);
+    saved.updatedAt = new Date().toISOString();
+    writeJsonAtomic(SETTINGS_FILE, saved);
+    connectorSettings = saved.connectors;
+    console.log(`[Admin] 🔌 Connector ${c.label} ${allow ? 'diizinkan' : 'tidak diizinkan'} untuk agen.`);
+    return { id, allowed: allow };
+  },
   // Tools & MCP
   'GET tools': async ({ query }) => {
     const days = Math.min(30, Math.max(1, Number.parseInt(query.get('days'), 10) || 7));
     const usage = summarizeTools(activity.read(days));
     const guestDenied = new Set(GUEST_DENY_RULES);
+    const list = await mcpServers(query.get('refresh') === '1');
+    const perm = ownerMcp();
     return {
       days,
-      servers: await mcpServers(query.get('refresh') === '1'),
+      servers: { ...list, items: list.items.map(s => ({ ...s, ownerAllowed: perm.servers.includes(s.name) })) },
+      connectors: connectorStatus({ config: readMcpConfigSafe(), cacheDir: MCP_CACHE_DIR, allowed: connectorSettings }),
+      denied: perm.deny,
       endpoint: { url: `http://127.0.0.1:${PORT}/tools/call`, tokenReady: fs.existsSync(TOOLS_TOKEN_FILE) },
       tools: TOOL_DEFINITIONS.map(t => ({
         name: t.name,

@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "setup-mcp": "node setup-joko-mcp.mjs",
-    "test": "node --test tests/message-guard.test.mjs tests/cron-manager.test.mjs tests/url-guard.test.mjs tests/agent-queue.test.mjs tests/agy-cli.test.mjs tests/media-input.test.mjs tests/memory-store.test.mjs tests/reply-context.test.mjs tests/file-outbox.test.mjs tests/joko-tools.test.mjs tests/document-builder.test.mjs tests/model-router.test.mjs tests/admin-panel.test.mjs tests/activity-log.test.mjs tests/skill-store.test.mjs"
+    "test": "node --test tests/message-guard.test.mjs tests/cron-manager.test.mjs tests/url-guard.test.mjs tests/agent-queue.test.mjs tests/agy-cli.test.mjs tests/media-input.test.mjs tests/memory-store.test.mjs tests/reply-context.test.mjs tests/file-outbox.test.mjs tests/joko-tools.test.mjs tests/document-builder.test.mjs tests/model-router.test.mjs tests/admin-panel.test.mjs tests/activity-log.test.mjs tests/skill-store.test.mjs tests/connectors.test.mjs"
   },
   "dependencies": {
     "@fontsource-variable/plus-jakarta-sans": "5.3.0",

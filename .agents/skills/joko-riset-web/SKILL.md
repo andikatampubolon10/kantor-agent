@@ -5,6 +5,14 @@ description: Riset topik atau merangkum tautan untuk Mas Andika memakai tool Jok
 
 # Riset web untuk WhatsApp
 
+## Pilih alat
+
+- **Perplexity** (server MCP `perplexity`, bila aktif) untuk pertanyaan riset/fakta: pakai `perplexity_search`
+  atau `perplexity_ask` — jawabannya sudah bersumber. `perplexity_research` (riset mendalam) mahal dan lama:
+  pakai HANYA bila Mas Andika meminta "riset mendalam/lengkap".
+- **cari_berita** untuk berita terkini, dan sebagai cadangan bila Perplexity tidak tersedia atau gagal.
+- **baca_halaman_web** untuk membuka link tertentu.
+
 ## Langkah
 
 1. **Link diberikan** → bila isinya belum ada di konteks, panggil `baca_halaman_web` dengan URL tersebut.
