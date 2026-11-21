@@ -92,7 +92,10 @@ class HttpError extends Error {
  * @param {Record<string, (body: object) => Promise<object>>} o.actions
  * @returns {(req, res) => Promise<boolean>} true bila permintaan ditangani panel
  */
-export function createAdminPanel({ port, tokenFile, logDir, getStatus, getModelInfo, saveModelSettings, testRoute, getPairing, actions }) {
+export function createAdminPanel({
+  port, tokenFile, logDir, getStatus, getModelInfo, saveModelSettings, testRoute, getPairing, actions,
+  getUsage, getConversations, getConversation, chat, openFile
+}) {
   const token = loadOrCreateAdminToken(tokenFile);
   const sessionValue = crypto.createHmac('sha256', token).update('joko-admin-session-v1').digest('hex');
   const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
@@ -195,6 +198,47 @@ export function createAdminPanel({ port, tokenFile, logDir, getStatus, getModelI
       const chunk = readLogChunk(logFileFor(day), fromRaw == null ? undefined : Number(fromRaw));
       return send(res, 200, { day, ...chunk });
     }
+    // ---- Fase 2: Pemakaian, Percakapan, Tanya Joko, file kiriman ----
+    if (method === 'GET' && api === 'usage' && getUsage) {
+      const days = Math.min(30, Math.max(1, parseInt(url.searchParams.get('days') || '7', 10) || 7));
+      return send(res, 200, getUsage(days));
+    }
+    if (method === 'GET' && api === 'conversations' && getConversations) return send(res, 200, { items: getConversations() });
+    if (method === 'GET' && api === 'conversation' && getConversation) {
+      const id = String(url.searchParams.get('chat') || '');
+      if (!id || id.length > 200) throw new HttpError(400, 'Chat tidak valid.');
+      return send(res, 200, getConversation(id));
+    }
+    if (chat && method === 'POST' && api === 'chat') {
+      const body = await readBody(req);
+      try { return send(res, 200, chat.start(body.text)); }
+      catch (err) { throw new HttpError(err.status || 400, err.message); }
+    }
+    if (chat && method === 'POST' && api === 'chat/reset') { chat.reset(); return send(res, 200, { ok: true }); }
+    const cm = api.match(/^chat\/([a-f0-9]{8,32})$/);
+    if (chat && method === 'GET' && cm) {
+      try { return send(res, 200, chat.get(cm[1])); }
+      catch (err) { throw new HttpError(err.status || 400, err.message); }
+    }
+    if (method === 'GET' && api === 'file' && openFile) {
+      let f;
+      try { f = openFile(String(url.searchParams.get('path') || '')); }
+      catch (err) { throw new HttpError(err.status || 404, err.message); }
+      // Hanya gambar yang ditampilkan langsung; selain itu selalu diunduh (HTML/SVG tidak
+      // pernah dirender di origin panel).
+      const inline = f.kind === 'image' && /^image\/(png|jpeg|webp)$/.test(f.mimetype);
+      res.writeHead(200, {
+        'Content-Type': inline ? f.mimetype : 'application/octet-stream',
+        'Content-Length': f.buffer.length,
+        'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(f.fileName)}`,
+        'X-Content-Type-Options': 'nosniff',
+        'Content-Security-Policy': "default-src 'none'; sandbox",
+        'Cache-Control': 'no-store'
+      });
+      res.end(f.buffer);
+      return;
+    }
+
     const m = api.match(/^actions\/([a-z-]+)$/);
     if (method === 'POST' && m && Object.hasOwn(actions, m[1])) {
       const body = await readBody(req);

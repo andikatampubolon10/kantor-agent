@@ -82,6 +82,7 @@ import {
   normalizeModelSettings, builtinTriggers, KNOWN_MODELS
 } from './model-router.mjs';
 import { createAdminPanel } from './admin-panel.mjs';
+import { createActivityLog, summarizeUsage, listConversations, conversationMessages } from './activity-log.mjs';
 import {
   checkMediaLimits,
   saveMediaToInbox,
@@ -117,6 +118,14 @@ import {
 import { renderLinkPage, renderQrSvg } from './link-page.mjs';
 
 const execFileAsync = promisify(execFile);
+
+// Catatan aktivitas untuk panel admin (Pemakaian & Percakapan) — lihat activity-log.mjs.
+const activity = createActivityLog({ dir: path.join(process.cwd(), 'logs', 'activity') });
+/** Kunci chat seragam: nomor polos -> JID chat pribadi. */
+const chatKey = (target) => {
+  const s = String(target || '');
+  return !s || s.includes('@') || s === 'panel' ? s : `${s.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+};
 
 // ==========================================
 // DYNAMIC ANTIGRAVITY IDE DISCOVERY & BRIDGE
@@ -602,6 +611,7 @@ async function sendWhatsAppFile(target, file) {
   }
   try {
     await sendBaileysFile(target, file);
+    activity.append({ type: 'msg', dir: 'out', chat: chatKey(target), text: file.caption || '', file: { name: file.fileName, kind: file.kind, size: file.buffer?.length || 0, previews: outboxPreviews(file.fileName) } });
     return true;
   } catch (err) {
     console.error(`[WA Baileys] ❌ Gagal mengirim file ${file.fileName}:`, err.message);
@@ -627,6 +637,7 @@ async function sendWhatsApp(target, message) {
   try {
     await sendBaileysMessage(target, message);
     console.log(`[WA Baileys] ✅ Pesan terkirim langsung ke: ${target}`);
+    activity.append({ type: 'msg', dir: 'out', chat: chatKey(target), text: message });
     return true;
   } catch (bErr) {
     console.error(`[WA Baileys] ❌ Gagal kirim ke ${target}:`, bErr.message);
@@ -770,8 +781,11 @@ function agyEnv() {
  * Mode CLI (EC2 / tanpa IDE). Sesi owner dikunci ke ID percakapan sendiri lewat
  * --conversation <id> (lihat agy-cli.mjs).
  */
-async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeText }) {
-  const saved = persist ? getSavedSession() : null;
+// session (opsional) = penyimpan sesi tersendiri { get(): id|null, save(id) }, mis. chat dari panel
+// admin, agar tidak bercampur dengan sesi WhatsApp owner.
+async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeText, label, session }) {
+  if (session) persist = true;
+  const saved = session ? { mode: 'cli', conversationId: session.get() } : (persist ? getSavedSession() : null);
   const resumeId = saved?.mode === 'cli' ? saved.conversationId : null;
   const prompt = resumeId ? promptBody : `${persona}\n\n${promptBody}`;
   // Pilih model dari teks permintaan asli (bukan konteks/persona yang panjang).
@@ -788,7 +802,7 @@ async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeT
     }, 35000);
   }
 
-  const runInfo = { at: Date.now(), model, tier: route.tier, reason: route.reason, persist: !!persist };
+  const runInfo = { at: Date.now(), model, tier: route.tier, reason: route.reason, persist: !!persist, chat: targetRecipient ? chatKey(targetRecipient) : (label || null), label: label || (persist ? 'owner' : 'jadwal') };
   try {
     const run = (m) => runAgyCli({ agyPath: AGY_PATH, prompt, resumeId, timeoutMs: OWNER_TASK_TIMEOUT_MS, env: agyEnv(), allowMcpServers: ['joko'], model: m });
     let result;
@@ -811,7 +825,7 @@ async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeT
       if (resumeId && !result.resumed) {
         console.warn(`[Agent] ⚠️ Sesi ${resumeId} tidak ditemukan; CLI membuka sesi baru ${result.conversationId}.`);
       }
-      saveSession(result.conversationId, 'cli');
+      if (session) session.save(result.conversationId); else saveSession(result.conversationId, 'cli');
     }
     return cleanHumanResponse(result.response) + note;
   } catch (err) {
@@ -839,6 +853,8 @@ const recentAgentRuns = [];
 function recordAgentRun(info) {
   recentAgentRuns.unshift(info);
   if (recentAgentRuns.length > 20) recentAgentRuns.length = 20;
+  const { at, ...rest } = info;
+  activity.append({ type: 'agent', t: at, ...rest });
 }
 
 /** Mode IDE (laptop Windows saat Antigravity IDE terbuka). */
@@ -1065,7 +1081,17 @@ async function runAgentConversation(userPrompt, targetRecipient, senderName, sen
       // menyentuh sesi percakapan owner (lihat guest-agent.mjs).
       const where = isGroup ? 'Grup WhatsApp' : 'Chat Pribadi WhatsApp';
       const guestPrompt = `${GUEST_PERSONA}\n\n${dataContext}[Pesan di ${where} dari tamu bernama ${safeName}]:\n${requestText}\n\n(Jawab ${safeName} secara ramah, solutif, dan ringkas sebagai Joko.)`;
-      responseText = cleanHumanResponse(await runGuestPrompt({ agyPath: AGY_PATH, prompt: guestPrompt, env: agyEnv() }));
+      const guestRun = { at: Date.now(), model: 'bawaan (tamu)', tier: 'tamu', reason: 'agen tamu tanpa tools', persist: false, chat: chatKey(targetRecipient), label: 'tamu', ok: false };
+      try {
+        responseText = cleanHumanResponse(await runGuestPrompt({ agyPath: AGY_PATH, prompt: guestPrompt, env: agyEnv() }));
+        guestRun.ok = true;
+      } catch (err) {
+        guestRun.error = String(err.message || err).slice(0, 160);
+        throw err;
+      } finally {
+        guestRun.ms = Date.now() - guestRun.at;
+        recordAgentRun(guestRun);
+      }
     }
     console.log(`[Agent] ✅ Respon Joko diterima (${responseText.length} karakter, ${isOwner ? 'owner' : 'tamu'}).`);
 
@@ -1254,6 +1280,10 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
         if (!invocation.invoked) {
           return;
         }
+        activity.append({
+          type: 'msg', dir: 'in', chat: chatKey(rawSender), name: sanitizeDisplayName(senderName), number: senderNumber || null,
+          owner: isOwner, group: isGroup, text: rawMessage, media: media ? (media.ptt ? 'voice note' : media.kind) : undefined
+        });
         let body = invocation.body;
 
         // ==========================================
@@ -1777,6 +1807,83 @@ async function restartJoko(reason, beforeExit) {
   }, 400);
 }
 
+// ---------- Chat dari panel admin ("Tanya Joko") ----------
+// Sesi CLI tersendiri (tidak bercampur dengan sesi WhatsApp). Tugas masuk antrean agen yang
+// sama dengan WhatsApp; browser menanyakan hasilnya berkala (tugas bisa sampai 10 menit).
+const panelChat = { conversationId: null, jobs: new Map() };
+const PANEL_SESSION = { get: () => panelChat.conversationId, save: (id) => { panelChat.conversationId = id; } };
+
+/** Pratinjau buatan buat_file untuk sebuah file di outbox (relatif terhadap outbox). */
+function outboxPreviews(fileName) {
+  const stem = fileName.replace(/\.[^.]+$/, '');
+  try {
+    return fs.readdirSync(path.join(MEDIA_OUTBOX_DIR, '.pratinjau'))
+      .filter(f => (f.startsWith(`${stem}-hal`) || f.startsWith(`${stem}-slide`)) && f.endsWith('.png'))
+      .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
+      .map(f => `.pratinjau/${f}`);
+  } catch { return []; }
+}
+
+function finishPanelReply(raw) {
+  let text = extractMemoryBlocks(raw).clean;
+  const notes = [];
+  if (/```(schedule|threads)\b/i.test(text)) {
+    text = text.replace(/```schedule\s*[\s\S]*?```/gi, '').replace(/```threads\s*([\s\S]*?)```/gi, '$1').trim();
+    notes.push('Jadwal/posting Threads tidak dijalankan dari panel — minta lewat WhatsApp.');
+  }
+  const blocks = extractFileBlocks(text);
+  text = blocks.clean;
+  const files = [];
+  for (const req of blocks.requests.slice(0, MAX_FILES_PER_REPLY)) {
+    const res = resolveOutboxFile(req.path);
+    if (res.ok) files.push({ name: res.fileName, kind: res.kind, size: res.buffer.length, caption: req.caption || '', previews: outboxPreviews(res.fileName) });
+    else notes.push(`File ${path.basename(req.path)} tidak tersedia: ${res.reason}.`);
+  }
+  return { text, files, notes };
+}
+
+function startPanelChat(input) {
+  const text = String(input || '').trim();
+  if (!text) throw new Error('Pesan masih kosong.');
+  if (text.length > 4000) throw new Error('Pesan terlalu panjang (maks. 4.000 karakter).');
+  const id = crypto.randomBytes(8).toString('hex');
+  const job = { id, request: text, status: 'antre', startedAt: Date.now(), runStartedAt: null, reply: null };
+  const memoryText = panelChat.conversationId ? '' : renderMemoryForPrompt(memoryStore.list());
+  const prompt = `${memoryText}[Chat dari Panel Admin Joko (browser di laptop) oleh Mas Andika]: "${text}"\n(PENTING: Jawab langsung secara ramah dan jelas sebagai Joko, SATU jawaban terbaik tanpa opsi pilihan ganda. JANGAN gunakan BypassSandbox: true, JANGAN gunakan tool ask_question, send_message, atau schedule, dan JANGAN ada pesan meta internal agen. Eksekusi tugas secara mandiri sampai tuntas. File boleh dibuat dengan buat_file lalu dilampirkan dengan blok kirim-file — file tampil sebagai unduhan di panel.)`;
+  const queued = enqueueAgentTask({
+    label: 'panel',
+    chatId: 'panel',
+    run: () => { job.status = 'berjalan'; job.runStartedAt = Date.now(); return askAgyCli(prompt, { persona: SYSTEM_PERSONA, routeText: text, label: 'panel', session: PANEL_SESSION }); }
+  });
+  if (!queued.accepted) throw new Error(queued.reason === 'chat_limit' ? 'Masih ada permintaan dari panel yang antre. Tunggu selesai dulu ya.' : 'Antrean Joko sedang penuh. Coba lagi sebentar lagi.');
+  panelChat.jobs.set(id, job);
+  for (const k of [...panelChat.jobs.keys()].slice(0, Math.max(0, panelChat.jobs.size - 30))) panelChat.jobs.delete(k);
+  job.ahead = queued.ahead;
+  activity.append({ type: 'msg', dir: 'in', chat: 'panel', name: 'Panel admin', owner: true, text });
+  console.log(`[Admin] 💬 Pesan dari panel masuk antrean (${queued.ahead} tugas di depan).`);
+  queued.done.then((raw) => {
+    const out = finishPanelReply(raw);
+    Object.assign(job, { reply: out.text, files: out.files, notes: out.notes, status: 'selesai' });
+    const run = recentAgentRuns.find(r => r.chat === 'panel');
+    if (run) Object.assign(job, { model: run.model, ms: run.ms });
+    activity.append({ type: 'msg', dir: 'out', chat: 'panel', text: [out.text, ...out.notes].filter(Boolean).join('\n\n') });
+    for (const f of out.files) activity.append({ type: 'msg', dir: 'out', chat: 'panel', text: f.caption, file: { name: f.name, kind: f.kind, size: f.size, previews: f.previews } });
+  }).catch((err) => {
+    job.status = 'gagal';
+    job.error = err instanceof AgentTimeoutError ? 'Tugas melewati batas waktu 10 menit.' : String(err.message || err).slice(0, 300);
+    if (err instanceof AgentTimeoutError && err.partial) job.reply = err.partial;
+    activity.append({ type: 'msg', dir: 'out', chat: 'panel', text: `⚠️ ${job.error}` });
+  }).finally(() => { job.finishedAt = Date.now(); });
+  return { id, ahead: queued.ahead };
+}
+
+function panelChatJob(id) {
+  const job = panelChat.jobs.get(String(id));
+  if (!job) throw Object.assign(new Error('Tugas tidak ditemukan (mungkin Joko sudah dimulai ulang).'), { status: 404 });
+  const { request, ...rest } = job;
+  return { ...rest, now: Date.now() };
+}
+
 const adminPanel = createAdminPanel({
   port: PORT,
   tokenFile: path.join(process.cwd(), '.joko-admin-token'),
@@ -1820,6 +1927,23 @@ const adminPanel = createAdminPanel({
     return { ready: b.ready, code: p.code, codeAt: p.codeAt, qrSvg: p.qr ? renderQrSvg(p.qr, 260) : null, qrAt: p.qrAt, now: Date.now() };
   },
   getModelInfo: modelInfo,
+  getUsage: (days) => summarizeUsage(activity.read(days), { days }),
+  getConversations: () => listConversations(activity.read(30)),
+  getConversation: (chat) => {
+    const events = activity.read(30);
+    const info = listConversations(events).find(c => c.chat === chat) || { chat, name: chat === 'panel' ? 'Panel admin' : null };
+    return { info, items: conversationMessages(events, chat) };
+  },
+  chat: {
+    start: startPanelChat,
+    get: panelChatJob,
+    reset: () => { panelChat.conversationId = null; console.log('[Admin] 💬 Sesi chat panel dimulai baru.'); }
+  },
+  openFile: (relPath) => {
+    const res = resolveOutboxFile(relPath);
+    if (!res.ok) throw Object.assign(new Error(res.reason === 'file tidak ditemukan' ? 'File sudah tidak ada (file kiriman dihapus otomatis setelah 24 jam).' : `File tidak bisa dibuka: ${res.reason}.`), { status: 404 });
+    return res;
+  },
   saveModelSettings: (input) => {
     const model = input ? normalizeModelSettings(input) : null;
     const saved = readJsonFile(SETTINGS_FILE, {}, { validate: d => d && typeof d === 'object' });

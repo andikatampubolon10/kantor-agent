@@ -65,7 +65,7 @@ h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; } h2 { font-size: 15px;
 .pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--panel-2); color: var(--muted); white-space: nowrap; }
 .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .pill.ok { background: var(--ok-soft); color: var(--ok); } .pill.warn { background: var(--warn-soft); color: var(--warn); } .pill.bad { background: var(--bad-soft); color: var(--bad); }
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--panel); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-weight: 550; min-height: 38px; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--line); background: var(--panel); padding: 8px 14px; border-radius: 8px; cursor: pointer; font-weight: 550; min-height: 38px; white-space: nowrap; flex: none; color: var(--text); text-decoration: none; }
 .btn:hover { background: var(--panel-2); }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
@@ -121,6 +121,55 @@ ol.steps { margin: 10px 0 0; padding-left: 20px; color: var(--muted); }
 .log .l.warn { color: #fcd34d; } .log .l.err { color: #fca5a5; background: rgba(248,113,113,.06); }
 .log mark { background: #854d0e; color: #fff; border-radius: 2px; }
 
+/* Pemakaian */
+.kpi-sub { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.chart { margin-top: 14px; }
+.chart svg { max-width: 100%; height: auto; display: block; overflow: visible; }
+#usageModels td:first-child { white-space: nowrap; }
+.chart .axis { fill: var(--muted); font-size: 11px; }
+.chart .grid-line { stroke: var(--line); stroke-width: 1; }
+.chart rect.bar:hover { opacity: .8; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Percakapan */
+.convo { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; height: calc(100vh - 150px); min-height: 480px; }
+.convo-list { overflow: auto; padding: 12px; }
+.ci { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 10px; border-radius: 9px; cursor: pointer; }
+.ci:hover { background: var(--panel-2); }
+.ci.on { background: var(--accent-soft); }
+.ci-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.ci-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ci-time { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ci-last { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+.tag { font-size: 10.5px; font-weight: 600; padding: 0 6px; border-radius: 5px; background: var(--panel-2); color: var(--muted); margin-left: 4px; vertical-align: 1px; }
+.tag.acc { background: var(--accent-soft); color: var(--accent); }
+.convo-main { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.convo-head { display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+.convo-head .back { display: none; }
+.timeline { flex: 1; overflow: auto; padding: 18px; display: flex; flex-direction: column; gap: 10px; background: var(--bg); }
+.day-sep { align-self: center; font-size: 11.5px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); padding: 1px 10px; border-radius: 999px; margin: 6px 0; }
+.bubble { max-width: min(680px, 85%); padding: 9px 13px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.bubble.out { align-self: flex-end; background: var(--accent-soft); border-color: transparent; }
+.bubble .who { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 2px; }
+.bubble .meta { font-size: 11px; color: var(--muted); margin-top: 4px; text-align: right; }
+.bubble pre { background: var(--panel-2); padding: 8px 10px; border-radius: 8px; overflow-x: auto; font: 12.5px/1.5 var(--mono); margin: 6px 0; white-space: pre-wrap; }
+.bubble code { background: var(--panel-2); padding: 0 4px; border-radius: 4px; }
+.run { align-self: center; font-size: 11.5px; color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+.run.bad { color: var(--bad); }
+.filecard { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); margin-top: 6px; }
+.filecard .ext { width: 38px; height: 38px; border-radius: 8px; display: grid; place-items: center; font: 700 10.5px var(--mono); background: var(--accent); color: var(--accent-text); flex: none; text-transform: uppercase; }
+.filecard div { min-width: 0; flex: 1; } .filecard b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.previews { display: flex; gap: 8px; overflow-x: auto; margin-top: 8px; padding-bottom: 4px; }
+.previews a { flex: none; } .previews img { height: 150px; border-radius: 6px; border: 1px solid var(--line); display: block; background: #fff; }
+.composer { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); background: var(--panel); align-items: flex-end; }
+.composer textarea { min-height: 44px; max-height: 180px; font-family: inherit; font-size: 14px; }
+.typing { align-self: flex-start; }
+.dots::after { content: "…"; animation: dots 1.2s steps(3) infinite; display: inline-block; width: 1.2em; overflow: hidden; vertical-align: bottom; }
+@keyframes dots { from { width: 0; } to { width: 1.2em; } }
+
 /* Login, toast, dialog */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login .card { width: 100%; max-width: 400px; padding: 28px; }
@@ -134,14 +183,23 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
 @media (max-width: 1000px) { .g4 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 760px) {
   .app { grid-template-columns: 1fr; }
-  .side { position: sticky; top: 0; height: auto; flex-direction: row; align-items: center; padding: 8px 12px; z-index: 10; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; }
-  .brand { padding: 0 6px 0 0; } .brand > div:last-child, .side-foot { display: none; }
-  .nav { display: flex; gap: 2px; } .nav a { padding: 7px 8px; gap: 6px; white-space: nowrap; font-size: 13.5px; }
-  .nav svg { width: 16px; height: 16px; }
-  main { padding: 18px 16px 40px; }
+  /* HP: menu jadi bilah tab di bawah layar */
+  .side { position: fixed; inset: auto 0 0 0; height: auto; padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); z-index: 20; border-right: 0; border-top: 1px solid var(--line); }
+  .brand, .side-foot { display: none; }
+  .nav { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; }
+  .nav a { flex-direction: column; gap: 2px; padding: 6px 2px; font-size: 11px; font-weight: 600; text-align: center; line-height: 1.2; }
+  .nav svg { width: 20px; height: 20px; }
+  main { padding: 18px 16px 84px; }
   .g4, .g2 { grid-template-columns: 1fr; }
   .pair { grid-template-columns: 1fr; justify-items: start; }
-  .log { height: calc(100vh - 260px); }
+  .log { height: calc(100vh - 330px); }
+  #usageKpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  #usageKpi .card { padding: 14px; } #usageKpi .stat-big { font-size: 18px; }
+  .convo { grid-template-columns: 1fr; height: auto; min-height: 0; }
+  .convo.detail .convo-list, .convo:not(.detail) .convo-main { display: none; }
+  .convo-main { height: calc(100vh - 250px); min-height: 420px; }
+  .convo-head .back { display: inline-flex; }
+  .bubble { max-width: 92%; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
@@ -166,6 +224,8 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
     <nav class="nav" aria-label="Menu">
       <a href="#/beranda" data-page="beranda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Beranda</a>
       <a href="#/model" data-page="model"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v6M6 15v6M18 3v10M18 19v2M12 3v2M12 11v10"/><circle cx="6" cy="12" r="2.5"/><circle cx="12" cy="8" r="2.5"/><circle cx="18" cy="16" r="2.5"/></svg>Model &amp; Routing</a>
+      <a href="#/pemakaian" data-page="pemakaian"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg>Pemakaian</a>
+      <a href="#/percakapan" data-page="percakapan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>Percakapan</a>
       <a href="#/log" data-page="log"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg>Log</a>
     </nav>
     <div class="side-foot">
@@ -249,6 +309,52 @@ dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top
             <h2>Kata pemicu bawaan</h2>
             <div id="builtin" class="stack" style="gap:12px"></div>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PEMAKAIAN -->
+    <section id="page-pemakaian" class="hidden">
+      <div class="head">
+        <div><h1>Pemakaian</h1><p class="sub">Permintaan ke model AI dan pesan yang ditangani Joko.</p></div>
+        <div class="seg" id="daysSeg">
+          <button type="button" data-v="7" class="on">7 hari</button>
+          <button type="button" data-v="14">14 hari</button>
+          <button type="button" data-v="30">30 hari</button>
+        </div>
+      </div>
+      <div class="grid g4" id="usageKpi"></div>
+      <div class="card" style="margin-top:16px">
+        <div class="stat-top"><h2 style="margin:0">Permintaan per hari</h2><div class="legend" id="usageLegend"></div></div>
+        <div id="usageChart" class="chart"></div>
+      </div>
+      <div class="grid g2" style="margin-top:16px">
+        <div class="card"><h2>Per model</h2><div class="table-wrap" id="usageModels"></div></div>
+        <div class="card"><h2>Kontak paling aktif</h2><div class="table-wrap" id="usageContacts"></div></div>
+      </div>
+    </section>
+
+    <!-- PERCAKAPAN -->
+    <section id="page-percakapan" class="hidden">
+      <div class="head">
+        <div><h1>Percakapan</h1><p class="sub">Pesan yang memanggil Joko beserta balasannya (30 hari terakhir).</p></div>
+      </div>
+      <div class="convo">
+        <div class="card convo-list" id="convoListWrap">
+          <input type="search" id="convoSearch" placeholder="Cari nama atau nomor…" style="margin-bottom:10px">
+          <div id="convoList"></div>
+        </div>
+        <div class="card convo-main" id="convoMain">
+          <div class="convo-head">
+            <button class="btn sm back" type="button" id="convoBack" aria-label="Kembali ke daftar">←</button>
+            <div style="min-width:0"><b id="convoTitle">Pilih percakapan</b><div class="small muted" id="convoSub"></div></div>
+            <button class="btn sm hidden" type="button" id="chatReset" style="margin-left:auto">Percakapan baru</button>
+          </div>
+          <div class="timeline" id="timeline"><div class="empty">Pilih percakapan di kiri.</div></div>
+          <form class="composer hidden" id="composer" autocomplete="off">
+            <textarea id="chatInput" rows="2" placeholder="Tanya Joko… (Enter untuk kirim, Shift+Enter baris baru)"></textarea>
+            <button class="btn primary" id="chatSend">Kirim</button>
+          </form>
         </div>
       </div>
     </section>
@@ -391,13 +497,16 @@ function stopAll() { timers.forEach(clearInterval); timers = []; }
 function every(fn, msInterval) { fn(); timers.push(setInterval(() => { if (!document.hidden) fn(); }, msInterval)); }
 function route() {
   const page = (location.hash.match(/^#\/(\w+)/) || [])[1] || 'beranda';
-  const valid = ['beranda', 'model', 'log'].includes(page) ? page : 'beranda';
+  const titles = { beranda: 'Beranda', model: 'Model & Routing', pemakaian: 'Pemakaian', percakapan: 'Percakapan', log: 'Log' };
+  const valid = titles[page] ? page : 'beranda';
   stopAll();
   $$('main > section').forEach(s => s.classList.toggle('hidden', s.id !== 'page-' + valid));
   $$('.nav a').forEach(a => { a.classList.toggle('on', a.dataset.page === valid); a.setAttribute('aria-current', a.dataset.page === valid ? 'page' : 'false'); });
-  document.title = { beranda: 'Beranda', model: 'Model & Routing', log: 'Log' }[valid] + ' · Panel Joko';
+  document.title = titles[valid] + ' · Panel Joko';
   if (valid === 'beranda') every(loadHome, 4000);
   if (valid === 'model') { loadModels(); every(loadSide, 10000); }
+  if (valid === 'pemakaian') { every(loadUsage, 30000); every(loadSide, 10000); }
+  if (valid === 'percakapan') { startConvo(); every(loadSide, 10000); }
   if (valid === 'log') { startLog(); every(loadSide, 10000); }
 }
 window.addEventListener('hashchange', route);
@@ -466,7 +575,7 @@ async function loadHome() {
 
   // Aktivitas agen
   $('#runs').innerHTML = s.recentRuns.length ? `<table><thead><tr><th>Waktu</th><th>Model</th><th>Alasan</th><th>Durasi</th><th>Status</th></tr></thead><tbody>${
-    s.recentRuns.map(r => `<tr><td>${ago(r.at, s.now)}</td><td><span class="mono">${esc(shortModel(r.model))}</span>${r.fallbackFrom ? `<div class="small muted">cadangan dari ${esc(shortModel(r.fallbackFrom))}</div>` : ''}</td><td class="small">${esc(r.tier)} · ${esc(r.reason)}${r.persist ? '' : ' <span class="muted">(jadwal)</span>'}</td><td>${ms(r.ms)}</td><td>${r.ok ? '<span class="pill ok">Berhasil</span>' : `<span class="pill bad" title="${esc(r.error)}">${r.error === 'timeout' ? 'Timeout' : 'Gagal'}</span>`}</td></tr>`).join('')
+    s.recentRuns.map(r => `<tr><td>${ago(r.at, s.now)}</td><td><span class="mono">${esc(shortModel(r.model))}</span>${r.fallbackFrom ? `<div class="small muted">cadangan dari ${esc(shortModel(r.fallbackFrom))}</div>` : ''}</td><td class="small">${esc(r.tier)} · ${esc(r.reason)}${r.label && r.label !== 'owner' ? ` <span class="tag">${esc(r.label)}</span>` : ''}</td><td>${ms(r.ms)}</td><td>${r.ok ? '<span class="pill ok">Berhasil</span>' : `<span class="pill bad" title="${esc(r.error)}">${r.error === 'timeout' ? 'Timeout' : 'Gagal'}</span>`}</td></tr>`).join('')
   }</tbody></table>` : '<div class="empty">Belum ada permintaan ke agen sejak Joko dinyalakan.</div>';
 
   // Jadwal
@@ -622,6 +731,242 @@ async function testRoute() {
   } catch (e) { out.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
 }
 $('#routeInput').oninput = testRouteSoon;
+
+// ---------- Pemakaian ----------
+let usageDays = 7;
+const PALETTE = ['#0f766e', '#2563eb', '#d97706', '#7c3aed', '#db2777', '#4b5563'];
+const fmtNum = (n) => Number(n || 0).toLocaleString('id-ID');
+const pct = (a, b) => b ? Math.round(a / b * 100) + '%' : '—';
+const dayLabel = (d, long = false) => new Date(d + 'T00:00:00').toLocaleDateString('id-ID', long ? { weekday: 'long', day: 'numeric', month: 'long' } : { day: 'numeric', month: 'short' });
+$$('#daysSeg button').forEach(b => b.onclick = () => { usageDays = +b.dataset.v; $$('#daysSeg button').forEach(x => x.classList.toggle('on', x === b)); loadUsage(); });
+function kpi(title, big, sub) {
+  return `<div class="card"><h3>${esc(title)}</h3><div class="stat-big">${big}</div><div class="kpi-sub">${sub}</div></div>`;
+}
+async function loadUsage() {
+  let u;
+  try { u = await api('usage?days=' + usageDays); } catch (e) { if (e.status !== 401) $('#usageChart').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const t = u.totals;
+  $('#usageKpi').innerHTML = [
+    kpi('Permintaan ke model', fmtNum(t.calls), `${fmtNum(t.msgIn)} pesan masuk · ${fmtNum(t.msgOut)} balasan`),
+    kpi('Berhasil', pct(t.ok, t.calls), `${fmtNum(t.failed)} gagal · ${fmtNum(t.timeouts)} timeout`),
+    kpi('Waktu respons (median)', t.medianMs ? ms(t.medianMs) : '—', 'dari permintaan yang berhasil'),
+    kpi('Model cadangan dipakai', fmtNum(t.fallbacks), `${fmtNum(t.files)} file dikirim`)
+  ].join('');
+
+  // Warna per model, urut dari yang paling sering
+  const models = u.models.map(m => m.model);
+  const color = (m) => PALETTE[Math.min(models.indexOf(m), PALETTE.length - 1)] || PALETTE.at(-1);
+  $('#usageLegend').innerHTML = models.length ? models.map(m => `<span><i style="background:${color(m)}"></i>${esc(shortModel(m))}</span>`).join('') : '';
+  renderUsageChart(u.perDay, models, color);
+
+  $('#usageModels').innerHTML = u.models.length ? `<table><thead><tr><th>Model</th><th class="num">Permintaan</th><th class="num">Berhasil</th><th class="num">Median</th><th class="num">Terlama</th></tr></thead><tbody>${
+    u.models.map(m => `<tr><td><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${color(m.model)};margin-right:6px"></span>${esc(shortModel(m.model))}${m.failed || m.timeouts ? `<div class="small muted">${m.failed} gagal · ${m.timeouts} timeout</div>` : ''}</td><td class="num">${fmtNum(m.calls)}</td><td class="num">${pct(m.ok, m.calls)}</td><td class="num">${m.medianMs ? ms(m.medianMs) : '—'}</td><td class="num">${m.maxMs ? ms(m.maxMs) : '—'}</td></tr>`).join('')
+  }</tbody></table>` : '<div class="empty">Belum ada permintaan ke model pada periode ini.</div>';
+
+  $('#usageContacts').innerHTML = u.topContacts.length ? `<table><thead><tr><th>Kontak</th><th class="num">Pesan ke Joko</th></tr></thead><tbody>${
+    u.topContacts.map(c => `<tr><td><a href="#/percakapan" data-chat="${esc(c.chat)}" class="open-chat">${esc(contactName(c))}</a>${c.group ? '<span class="tag">grup</span>' : ''}</td><td class="num">${fmtNum(c.count)}</td></tr>`).join('')
+  }</tbody></table>` : '<div class="empty">Belum ada pesan pada periode ini.</div>';
+  $$('#usageContacts .open-chat').forEach(a => a.onclick = () => { pendingChat = a.dataset.chat; });
+}
+let lastChart = null;
+window.addEventListener('resize', () => { if (lastChart && !$('#page-pemakaian').classList.contains('hidden')) renderUsageChart(...lastChart); });
+function renderUsageChart(perDay, models, color) {
+  lastChart = [perDay, models, color];
+  // Lebar SVG = lebar kotak sebenarnya, supaya teks sumbu tidak ikut tertekan di layar sempit.
+  const W = Math.max(280, $('#usageChart').clientWidth || 760), H = 240, padL = 34, padB = 26, padT = 8;
+  const max = Math.max(1, ...perDay.map(d => d.calls));
+  const step = max <= 5 ? 1 : max <= 10 ? 2 : max <= 25 ? 5 : max <= 50 ? 10 : Math.ceil(max / 5 / 10) * 10;
+  const top = Math.ceil(max / step) * step;
+  const y = (v) => H - padB - (v / top) * (H - padB - padT);
+  const bw = (W - padL) / perDay.length;
+  const barW = Math.max(4, Math.min(36, bw * 0.62));
+  let svg = '';
+  for (let v = 0; v <= top; v += step) svg += `<line class="grid-line" x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${padL - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  const labelEvery = Math.ceil(perDay.length / Math.max(2, Math.floor((W - padL) / 56)));
+  perDay.forEach((d, i) => {
+    const x = padL + i * bw + (bw - barW) / 2;
+    let acc = 0;
+    const order = models.filter(m => d.byModel[m]);
+    order.forEach((m, k) => {
+      const v = d.byModel[m];
+      const y0 = y(acc), y1 = y(acc + v);
+      acc += v;
+      const isTop = k === order.length - 1;
+      svg += `<rect class="bar" x="${x}" y="${y1}" width="${barW}" height="${Math.max(0, y0 - y1 - (isTop ? 0 : 1))}" rx="${isTop ? 3 : 0}" fill="${color(m)}"><title>${esc(dayLabel(d.day, true))}\n${esc(shortModel(m))}: ${v} permintaan</title></rect>`;
+    });
+    if (!d.calls) svg += `<rect x="${x}" y="${y(0) - 1}" width="${barW}" height="1" fill="var(--line)"><title>${esc(dayLabel(d.day, true))}: tidak ada permintaan</title></rect>`;
+    if (i % labelEvery === 0 || i === perDay.length - 1) svg += `<text class="axis" x="${x + barW / 2}" y="${H - 8}" text-anchor="middle">${esc(dayLabel(d.day))}</text>`;
+  });
+  const total = perDay.reduce((a, d) => a + d.calls, 0);
+  $('#usageChart').innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Permintaan ke model per hari, total ${total}">${svg}</svg>`;
+}
+
+// ---------- Percakapan ----------
+let convoItems = [];
+let activeChat = null;
+let pendingChat = null;
+const PANEL = 'panel';
+function contactName(c) {
+  if (c.chat === PANEL) return 'Tanya Joko (panel)';
+  const num = String(c.chat).split('@')[0];
+  if (c.group) return c.name ? `Grup · ${c.name}` : 'Grup';
+  return c.name ? c.name : '+' + num;
+}
+function waFormat(text) {
+  let s = esc(text);
+  const blocks = [];
+  s = s.replace(/```([\s\S]*?)```/g, (_, c) => { blocks.push(`<pre>${c.replace(/^\n/, '')}</pre>`); return `\u0000${blocks.length - 1}\u0000`; });
+  s = s.replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,!?:;]|$)/g, '$1<b>$2</b>')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=[\s).,!?:;]|$)/g, '$1<i>$2</i>')
+    .replace(/(^|[\s(])~([^~\n]+)~(?=[\s).,!?:;]|$)/g, '$1<s>$2</s>')
+    .replace(/\n/g, '<br>');
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[i]);
+}
+const timeOnly = (t) => new Date(t).toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta', hour: '2-digit', minute: '2-digit' });
+const dayOf = (t) => new Date(t + 7 * 3600000).toISOString().slice(0, 10);
+const sizeText = (b) => b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+const fileUrl = (p) => '/admin/api/file?path=' + encodeURIComponent(p);
+const previewsHtml = (f) => (f.previews || []).length
+  ? `<div class="previews">${f.previews.map(p => `<a href="${fileUrl(p)}" target="_blank" rel="noopener"><img src="${fileUrl(p)}" alt="Pratinjau ${esc(f.name)}" loading="lazy" onerror="this.parentElement.remove()"></a>`).join('')}</div>`
+  : '';
+function fileCard(f) {
+  const ext = (f.name.split('.').pop() || '').slice(0, 4);
+  return `<div class="filecard"><span class="ext">${esc(ext)}</span><div><b>${esc(f.name)}</b><span class="small muted">${f.size ? sizeText(f.size) : ''}</span></div><a class="btn sm" style="margin-left:auto" href="${fileUrl(f.name)}" download>Unduh</a></div>${previewsHtml(f)}`;
+}
+
+async function startConvo() {
+  await loadConvoList();
+  const want = pendingChat || (activeChat && convoItems.some(c => c.chat === activeChat) ? activeChat : null);
+  pendingChat = null;
+  if (want) openChat(want); else if (window.innerWidth > 760) openChat(PANEL);
+  timers.push(setInterval(() => { if (!document.hidden) loadConvoList(); }, 15000));
+}
+async function loadConvoList() {
+  try { convoItems = (await api('conversations')).items; } catch { return; }
+  if (!convoItems.some(c => c.chat === PANEL)) convoItems.unshift({ chat: PANEL, count: 0, lastAt: 0, lastText: 'Ngobrol dengan Joko langsung dari sini' });
+  else convoItems = [convoItems.find(c => c.chat === PANEL), ...convoItems.filter(c => c.chat !== PANEL)];
+  renderConvoList();
+}
+function renderConvoList() {
+  const q = $('#convoSearch').value.trim().toLowerCase();
+  const items = convoItems.filter(c => !q || contactName(c).toLowerCase().includes(q) || c.chat.includes(q));
+  $('#convoList').innerHTML = items.length ? items.map(c => `<button type="button" class="ci ${c.chat === activeChat ? 'on' : ''}" data-chat="${esc(c.chat)}">
+    <div class="ci-top"><span class="ci-name">${esc(contactName(c))}${c.chat === PANEL ? '<span class="tag acc">panel</span>' : c.owner ? '<span class="tag acc">owner</span>' : c.group ? '<span class="tag">grup</span>' : ''}</span><span class="ci-time">${c.lastAt ? ago(c.lastAt) : ''}</span></div>
+    <div class="ci-last">${c.lastAt ? (c.lastDir === 'out' ? 'Joko: ' : '') : ''}${esc(c.lastText || '')}</div></button>`).join('') : '<div class="empty">Tidak ada percakapan.</div>';
+  $$('#convoList .ci').forEach(b => b.onclick = () => openChat(b.dataset.chat));
+}
+$('#convoSearch').oninput = renderConvoList;
+$('#convoBack').onclick = () => { $('.convo').classList.remove('detail'); };
+
+async function openChat(chat) {
+  activeChat = chat;
+  $('.convo').classList.add('detail');
+  renderConvoList();
+  const isPanel = chat === PANEL;
+  $('#composer').classList.toggle('hidden', !isPanel);
+  $('#chatReset').classList.toggle('hidden', !isPanel);
+  let data;
+  try { data = await api('conversation?chat=' + encodeURIComponent(chat)); } catch (e) { $('#timeline').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  if (activeChat !== chat) return;
+  const info = { ...data.info, chat };
+  $('#convoTitle').textContent = contactName(info);
+  $('#convoSub').textContent = isPanel ? 'Sesi terpisah dari WhatsApp · pesan masuk antrean yang sama' : `${chat.endsWith('@g.us') ? 'Grup WhatsApp' : '+' + chat.split('@')[0]} · ${data.items.filter(i => i.type === 'msg').length} pesan`;
+  renderTimeline(data.items, isPanel);
+  if (isPanel) resumePanelJob();
+}
+function renderTimeline(items, isPanel) {
+  const tl = $('#timeline');
+  if (!items.length) {
+    tl.innerHTML = `<div class="empty">${isPanel ? 'Belum ada obrolan. Tulis pertanyaan atau minta file di bawah — misalnya <i>"buatkan PDF ringkasan pengeluaran contoh"</i>.' : 'Belum ada pesan.'}</div>`;
+    return;
+  }
+  let html = '', lastDay = '';
+  for (const e of items) {
+    const d = dayOf(e.t);
+    if (d !== lastDay) { html += `<div class="day-sep">${esc(dayLabel(d, true))}</div>`; lastDay = d; }
+    if (e.type === 'agent') {
+      html += `<div class="run ${e.ok ? '' : 'bad'}">⚙ ${esc(shortModel(e.model))} · ${esc(e.tier || '')} · ${e.ms ? ms(e.ms) : '—'} · ${e.ok ? 'berhasil' : (e.error === 'timeout' ? 'timeout' : 'gagal')}${e.fallbackFrom ? ' · cadangan' : ''}</div>`;
+      continue;
+    }
+    const out = e.dir === 'out';
+    const who = out ? '' : `<div class="who">${esc(isPanel ? 'Anda' : (e.name || 'Pengirim'))}${e.owner && !isPanel ? ' <span class="tag acc">owner</span>' : ''}</div>`;
+    const media = e.media ? `<div class="small muted">[${esc(e.media)}]</div>` : '';
+    const body = e.text ? waFormat(e.text) : '';
+    const file = e.file ? fileCard(e.file) : '';
+    html += `<div class="bubble ${out ? 'out' : ''}">${who}${media}${body}${file}<div class="meta">${timeOnly(e.t)}</div></div>`;
+  }
+  tl.innerHTML = html;
+  tl.scrollTop = tl.scrollHeight;
+}
+
+// Tanya Joko dari panel
+let panelJob = null;
+function showTyping(job) {
+  $('#typingBubble')?.remove();
+  if (!job) return;
+  const sec = Math.round(((job.now || Date.now()) - (job.runStartedAt || job.startedAt)) / 1000);
+  const label = job.status === 'antre' ? `Menunggu antrean${job.ahead ? ` (${job.ahead} tugas di depan)` : ''}` : `Joko sedang mengerjakan · ${dur(sec)}`;
+  const tl = $('#timeline');
+  tl.querySelector('.empty')?.remove();
+  tl.insertAdjacentHTML('beforeend', `<div class="bubble out typing" id="typingBubble"><span class="muted dots">${esc(label)}</span></div>`);
+  tl.scrollTop = tl.scrollHeight;
+}
+async function pollPanelJob() {
+  if (!panelJob) return;
+  let job;
+  try { job = await api('chat/' + panelJob); }
+  catch (e) { if (e.status === 404) { panelJob = null; store.set('joko-panel-job', ''); showTyping(null); setComposer(true); } return; }
+  if (job.status === 'antre' || job.status === 'berjalan') { if (activeChat === PANEL) showTyping(job); return; }
+  panelJob = null; store.set('joko-panel-job', '');
+  setComposer(true);
+  if (activeChat !== PANEL) return;
+  showTyping(null);
+  await openChat(PANEL); // balasan & file (dengan pratinjau) dimuat dari catatan aktivitas
+  if (job.notes?.length) $('#timeline').insertAdjacentHTML('beforeend', `<div class="run">${job.notes.map(esc).join(' · ')}</div>`);
+  if (job.status === 'gagal') toast(job.error || 'Permintaan gagal.', true);
+  $('#timeline').scrollTop = $('#timeline').scrollHeight;
+  loadConvoList();
+}
+function setComposer(enabled) {
+  $('#chatSend').disabled = !enabled;
+  $('#chatInput').disabled = !enabled;
+  if (enabled && activeChat === PANEL) $('#chatInput').focus();
+}
+function resumePanelJob() {
+  const saved = store.get('joko-panel-job');
+  if (!panelJob && saved) panelJob = saved;
+  if (panelJob) { setComposer(false); pollPanelJob(); ensurePanelTimer(); } else setComposer(true);
+}
+let panelTimer = null;
+function ensurePanelTimer() {
+  if (panelTimer) return;
+  panelTimer = setInterval(() => { if (!panelJob) { clearInterval(panelTimer); panelTimer = null; return; } if (!document.hidden) pollPanelJob(); }, 2000);
+}
+$('#composer').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const text = $('#chatInput').value.trim();
+  if (!text || panelJob) return;
+  setComposer(false);
+  try {
+    const r = await api('chat', { method: 'POST', body: { text } });
+    panelJob = r.id; store.set('joko-panel-job', r.id);
+    $('#chatInput').value = '';
+    const tl = $('#timeline');
+    tl.querySelector('.empty')?.remove();
+    tl.insertAdjacentHTML('beforeend', `<div class="bubble"><div class="who">Anda</div>${waFormat(text)}<div class="meta">${timeOnly(Date.now())}</div></div>`);
+    showTyping({ status: r.ahead ? 'antre' : 'berjalan', ahead: r.ahead, startedAt: Date.now() });
+    ensurePanelTimer();
+  } catch (e) { toast(e.message, true); setComposer(true); }
+});
+$('#chatInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('#composer').requestSubmit(); }
+});
+$('#chatReset').onclick = async () => {
+  if (!await confirmDialog({ title: 'Mulai percakapan baru?', html: 'Joko tidak lagi mengingat isi obrolan panel sebelumnya (riwayat tetap tersimpan di sini). Sesi WhatsApp tidak terpengaruh.', okText: 'Mulai baru' })) return;
+  try { await api('chat/reset', { method: 'POST', body: {} }); toast('Percakapan panel dimulai baru.'); $('#timeline').insertAdjacentHTML('beforeend', '<div class="day-sep">Percakapan baru</div>'); }
+  catch (e) { toast(e.message, true); }
+};
 
 // ---------- Log ----------
 const MAX_LINES = 4000;
