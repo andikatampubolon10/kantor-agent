@@ -127,3 +127,31 @@ test('outbox lama dibersihkan', () => {
     assert.deepEqual(fs.readdirSync(s.outbox), ['baru.pdf']);
   } finally { s.done(); }
 });
+
+test('panel: daftar, hapus & perpanjang file outbox', async () => {
+  const { listOutboxFiles, deleteOutboxFile, keepOutboxFile, previewsOf } = await import('../file-outbox.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-outbox-panel-'));
+  try {
+    fs.mkdirSync(path.join(dir, '.pratinjau'));
+    fs.writeFileSync(path.join(dir, 'lapor.pdf'), 'pdf');
+    fs.writeFileSync(path.join(dir, '.pratinjau', 'lapor-hal2.png'), 'p');
+    fs.writeFileSync(path.join(dir, '.pratinjau', 'lapor-hal10.png'), 'p');
+    fs.writeFileSync(path.join(dir, '.pratinjau', 'lapor-hal1.png'), 'p');
+    fs.writeFileSync(path.join(dir, '.pratinjau', 'laporan-lain-hal1.png'), 'p');
+    const old = new Date(Date.now() - 20 * 3600000);
+    fs.utimesSync(path.join(dir, 'lapor.pdf'), old, old);
+    const [f] = listOutboxFiles(dir);
+    assert.equal(f.name, 'lapor.pdf');
+    assert.deepEqual(f.previews, ['.pratinjau/lapor-hal1.png', '.pratinjau/lapor-hal2.png', '.pratinjau/lapor-hal10.png']);
+    assert.equal(listOutboxFiles(dir).length, 1); // folder .pratinjau tidak ikut
+    assert.ok(keepOutboxFile('lapor.pdf', dir));
+    assert.ok(fs.statSync(path.join(dir, 'lapor.pdf')).mtimeMs > old.getTime() + 3600000);
+    for (const bad of ['../lapor.pdf', '.pratinjau', 'tidak-ada.pdf', '']) {
+      assert.equal(deleteOutboxFile(bad, dir), false, bad);
+      assert.equal(keepOutboxFile(bad, dir), false, bad);
+    }
+    assert.ok(deleteOutboxFile('lapor.pdf', dir));
+    assert.deepEqual(previewsOf('lapor.pdf', dir), []);
+    assert.deepEqual(fs.readdirSync(path.join(dir, '.pratinjau')), ['laporan-lain-hal1.png']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

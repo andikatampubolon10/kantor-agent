@@ -13,7 +13,10 @@ import {
   createJobFromAI,
   startCronScheduler,
   checkGuestJobPolicy,
-  filterVisibleJobs
+  filterVisibleJobs,
+  updateJob,
+  buildJobFromPanel,
+  JobInputError
 } from './cron-manager.mjs';
 import { readJsonFile, writeJsonAtomic } from './json-store.mjs';
 import { extractFirstUrl, UnsafeUrlError } from './url-guard.mjs';
@@ -82,6 +85,7 @@ import {
   normalizeModelSettings, builtinTriggers, KNOWN_MODELS
 } from './model-router.mjs';
 import { createAdminPanel } from './admin-panel.mjs';
+import { createSkillStore } from './skill-store.mjs';
 import { createActivityLog, summarizeUsage, listConversations, conversationMessages } from './activity-log.mjs';
 import {
   checkMediaLimits,
@@ -96,7 +100,8 @@ import {
   renderMemoryForPrompt,
   formatMemoryList,
   extractMemoryBlocks,
-  MAX_AI_FACTS_PER_TURN
+  MAX_AI_FACTS_PER_TURN,
+  MAX_FACTS
 } from './memory-store.mjs';
 import { describeQuoted } from './reply-context.mjs';
 import {
@@ -105,7 +110,11 @@ import {
   extractFileBlocks,
   resolveOutboxFile,
   canSendFiles,
-  cleanupOutbox
+  cleanupOutbox,
+  previewsOf,
+  listOutboxFiles,
+  deleteOutboxFile,
+  keepOutboxFile
 } from './file-outbox.mjs';
 import {
   initBaileys,
@@ -113,7 +122,8 @@ import {
   sendBaileysFile,
   getBaileysStatus,
   getPairingInfo,
-  closeBaileys
+  closeBaileys,
+  getGroupSubject
 } from './baileys-bridge.mjs';
 import { renderLinkPage, renderQrSvg } from './link-page.mjs';
 
@@ -611,7 +621,7 @@ async function sendWhatsAppFile(target, file) {
   }
   try {
     await sendBaileysFile(target, file);
-    activity.append({ type: 'msg', dir: 'out', chat: chatKey(target), text: file.caption || '', file: { name: file.fileName, kind: file.kind, size: file.buffer?.length || 0, previews: outboxPreviews(file.fileName) } });
+    activity.append({ type: 'msg', dir: 'out', chat: chatKey(target), text: file.caption || '', file: { name: file.fileName, kind: file.kind, size: file.buffer?.length || 0, previews: previewsOf(file.fileName) } });
     return true;
   } catch (err) {
     console.error(`[WA Baileys] ❌ Gagal mengirim file ${file.fileName}:`, err.message);
@@ -1813,16 +1823,6 @@ async function restartJoko(reason, beforeExit) {
 const panelChat = { conversationId: null, jobs: new Map() };
 const PANEL_SESSION = { get: () => panelChat.conversationId, save: (id) => { panelChat.conversationId = id; } };
 
-/** Pratinjau buatan buat_file untuk sebuah file di outbox (relatif terhadap outbox). */
-function outboxPreviews(fileName) {
-  const stem = fileName.replace(/\.[^.]+$/, '');
-  try {
-    return fs.readdirSync(path.join(MEDIA_OUTBOX_DIR, '.pratinjau'))
-      .filter(f => (f.startsWith(`${stem}-hal`) || f.startsWith(`${stem}-slide`)) && f.endsWith('.png'))
-      .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
-      .map(f => `.pratinjau/${f}`);
-  } catch { return []; }
-}
 
 function finishPanelReply(raw) {
   let text = extractMemoryBlocks(raw).clean;
@@ -1836,7 +1836,7 @@ function finishPanelReply(raw) {
   const files = [];
   for (const req of blocks.requests.slice(0, MAX_FILES_PER_REPLY)) {
     const res = resolveOutboxFile(req.path);
-    if (res.ok) files.push({ name: res.fileName, kind: res.kind, size: res.buffer.length, caption: req.caption || '', previews: outboxPreviews(res.fileName) });
+    if (res.ok) files.push({ name: res.fileName, kind: res.kind, size: res.buffer.length, caption: req.caption || '', previews: previewsOf(res.fileName) });
     else notes.push(`File ${path.basename(req.path)} tidak tersedia: ${res.reason}.`);
   }
   return { text, files, notes };
@@ -1884,7 +1884,127 @@ function panelChatJob(id) {
   return { ...rest, now: Date.now() };
 }
 
+// ---------- Fase 3: Skill, Jadwal, Memori & Kontak, File ----------
+const skillStore = createSkillStore(process.cwd());
+let runScheduledJob = null; // diisi saat scheduler dimulai (lihat server.listen)
+const OWNER_NUMBER = [...AUTHORIZED_TARGETS][0];
+const panelError = (message, status = 400) => Object.assign(new Error(message), { status });
+
+/** Grup yang dikenal Joko: yang diberi akses + yang pernah memanggil Joko (30 hari). */
+async function knownGroups() {
+  const allowed = loadAllowedGroups();
+  const seen = new Map();
+  for (const c of listConversations(activity.read(30))) if (c.group) seen.set(c.chat, c.lastAt);
+  const ids = [...new Set([...allowed, ...seen.keys()])].filter(id => String(id).endsWith('@g.us'));
+  const names = await Promise.all(ids.map(id => getGroupSubject(id)));
+  return ids.map((id, i) => ({ id, name: names[i], allowed: allowed.has(id), lastAt: seen.get(id) || null }))
+    .sort((a, b) => (b.lastAt || 0) - (a.lastAt || 0));
+}
+
+async function jobTargets() {
+  const groups = await knownGroups();
+  return [
+    ...[...AUTHORIZED_TARGETS].map(n => ({ id: n, label: `Mas Andika (+${n})` })),
+    ...[...loadAllowedPersonalUsers()].map(n => ({ id: n, label: `Teman +${n}` })),
+    ...groups.map(g => ({ id: g.id, label: `Grup · ${g.name || g.id}` }))
+  ];
+}
+
+const panelExtra = {
+  // Skill
+  'GET skills': () => ({ items: skillStore.list() }),
+  'GET skill': ({ query }) => skillStore.read(query.get('name')),
+  'POST skill/save': ({ body }) => { const r = skillStore.save(String(body.name || ''), body.content); console.log(`[Admin] 🧩 Skill ${r.name} diperbarui.`); return r; },
+  'POST skill/create': ({ body }) => { const r = skillStore.create(String(body.name || ''), body.content); console.log(`[Admin] 🧩 Skill baru ${r.name} dibuat.`); return r; },
+  'POST skill/active': ({ body }) => { const r = skillStore.setActive(String(body.name || ''), body.active === true); console.log(`[Admin] 🧩 Skill ${r.name} ${r.active ? 'diaktifkan' : 'dinonaktifkan'}.`); return r; },
+
+  // Jadwal
+  'GET jobs': async () => ({ items: loadJobs(), targets: await jobTargets(), now: Date.now() }),
+  'POST jobs/save': ({ body }) => {
+    let built;
+    try { built = buildJobFromPanel(body); } catch (err) { throw panelError(err instanceof JobInputError ? err.message : 'Jadwal tidak valid.'); }
+    if (body.id) {
+      const job = updateJob(String(body.id), { ...built, lastRunMinute: null });
+      if (!job) throw panelError('Jadwal tidak ditemukan.', 404);
+      console.log(`[Admin] 📅 Jadwal "${job.title}" diubah.`);
+      return { job };
+    }
+    const job = addJob({ ...built, creator: OWNER_NUMBER, creatorName: 'Mas Andika' });
+    console.log(`[Admin] 📅 Jadwal baru "${job.title}" (${job.config.readableTime}).`);
+    return { job };
+  },
+  'POST jobs/pause': ({ body }) => {
+    const job = updateJob(String(body.id || ''), { paused: body.paused === true });
+    if (!job) throw panelError('Jadwal tidak ditemukan.', 404);
+    console.log(`[Admin] 📅 Jadwal "${job.title}" ${job.paused ? 'dijeda' : 'dilanjutkan'}.`);
+    return { job };
+  },
+  'POST jobs/delete': ({ body }) => {
+    if (!removeJob(String(body.id || ''))) throw panelError('Jadwal tidak ditemukan.', 404);
+    console.log(`[Admin] 📅 Jadwal ${body.id} dihapus.`);
+    return {};
+  },
+  'POST jobs/run': ({ body }) => {
+    if (!runScheduledJob) throw panelError('Penjadwal belum siap. Coba lagi sebentar.');
+    const job = loadJobs().find(j => j.id === String(body.id || ''));
+    if (!job) throw panelError('Jadwal tidak ditemukan.', 404);
+    const ran = { ...job, lastRun: new Date().toISOString(), totalRuns: (job.totalRuns || 0) + 1 };
+    if (job.type === 'once') removeJob(job.id); else updateJob(job.id, { lastRun: ran.lastRun, totalRuns: ran.totalRuns });
+    console.log(`[Admin] ▶️ Jadwal "${job.title}" dijalankan manual dari panel.`);
+    Promise.resolve().then(() => runScheduledJob(ran)).catch(err => console.error(`[Admin] Jadwal ${job.id} gagal:`, err.message));
+    return { message: job.actionType === 'text' ? 'Pengingat dikirim.' : 'Tugas dijalankan; hasilnya dikirim ke WhatsApp tujuan begitu selesai.' };
+  },
+
+  // Memori
+  'GET memory': () => ({ items: memoryStore.list(), max: MAX_FACTS }),
+  'POST memory/add': ({ body }) => {
+    const r = memoryStore.add(String(body.text || ''), 'owner');
+    if (!r.ok) throw panelError({ invalid: 'Fakta terlalu pendek atau terlalu panjang (3–300 karakter).', duplicate: 'Fakta itu sudah ada.', full: `Memori penuh (maks. ${MAX_FACTS}). Hapus yang lama dulu.` }[r.reason]);
+    console.log('[Admin] 🧠 Memori ditambah dari panel.');
+    return { fact: r.fact };
+  },
+  'POST memory/delete': ({ body }) => {
+    const id = String(body.id || '');
+    if (!/^[a-f0-9]{6}$/.test(id)) throw panelError('ID memori tidak valid.');
+    const r = memoryStore.remove(id);
+    if (!r.removed) throw panelError('Memori tidak ditemukan.', 404);
+    console.log('[Admin] 🧠 Memori dihapus dari panel.');
+    return {};
+  },
+
+  // Kontak & akses
+  'GET contacts': async () => ({ owners: [...AUTHORIZED_TARGETS], personal: [...loadAllowedPersonalUsers()], groups: await knownGroups() }),
+  'POST contacts/personal': ({ body }) => {
+    const clean = normalizePhoneNumber(String(body.number || ''));
+    if (!clean || !/^\d{8,15}$/.test(clean)) throw panelError('Nomor tidak valid (contoh: 081234567890).');
+    if (AUTHORIZED_TARGETS.has(clean)) throw panelError('Nomor itu adalah nomor owner.');
+    const n = body.allow === true ? grantPersonalAccess(clean) : revokePersonalAccess(clean);
+    console.log(`[Admin] 👥 Akses chat pribadi ${body.allow === true ? 'dibuka untuk' : 'dicabut dari'} ${n}.`);
+    return { number: n };
+  },
+  'POST contacts/group': ({ body }) => {
+    const id = String(body.id || '');
+    if (!/^[\d-]{10,40}@g\.us$/.test(id)) throw panelError('ID grup tidak valid.');
+    if (body.allow === true) grantGroupAccess(id); else revokeGroupAccess(id);
+    console.log(`[Admin] 👥 Akses anggota grup ${id} ${body.allow === true ? 'dibuka' : 'dikunci'}.`);
+    return {};
+  },
+
+  // File kiriman
+  'GET files': () => ({ items: listOutboxFiles(), now: Date.now() }),
+  'POST files/delete': ({ body }) => {
+    if (!deleteOutboxFile(String(body.name || ''))) throw panelError('File tidak ditemukan.', 404);
+    console.log(`[Admin] 🗑️ File ${body.name} dihapus dari outbox.`);
+    return {};
+  },
+  'POST files/keep': ({ body }) => {
+    if (!keepOutboxFile(String(body.name || ''))) throw panelError('File tidak ditemukan.', 404);
+    return { message: 'File disimpan 24 jam lagi.' };
+  }
+};
+
 const adminPanel = createAdminPanel({
+  extra: panelExtra,
   port: PORT,
   tokenFile: path.join(process.cwd(), '.joko-admin-token'),
   logDir: path.join(process.cwd(), 'logs'),
@@ -2144,7 +2264,7 @@ server.listen(PORT, '127.0.0.1', async () => {
   }
 
   // Mulai Engine Cron Scheduler
-  startCronScheduler(async (job) => {
+  startCronScheduler(runScheduledJob = async (job) => {
     console.log(`[Cron Trigger] ⏰ Menjalankan jadwal "${job.title}" (${job.id}) ke ${job.target}`);
 
     if (job.actionType === 'executive_briefing') {

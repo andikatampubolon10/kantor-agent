@@ -51,6 +51,81 @@ export function addJob(job) {
   return newJob;
 }
 
+/** Ubah sebagian isi satu jadwal (mis. dari panel admin). Null bila ID tidak ada. */
+export function updateJob(id, patch) {
+  let updated = null;
+  updateJobs(jobs => jobs.map(j => {
+    if (j.id !== id) return j;
+    updated = { ...j, ...patch, id: j.id, createdAt: j.createdAt };
+    return updated;
+  }));
+  return updated;
+}
+
+const HARI_NAMA = ['minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu'];
+const ACTION_TYPES = ['text', 'ai_prompt', 'executive_briefing'];
+const TARGET_RE = /^(\d{8,15}|\d{8,15}@s\.whatsapp\.net|[\d-]{10,40}@g\.us)$/;
+
+export class JobInputError extends Error {}
+
+/**
+ * Bangun jadwal dari formulir panel admin (owner). Melempar JobInputError berbahasa Indonesia.
+ * input: { title, type: once|daily|weekly|interval|cron, time, day (0-6), at (ISO/ms, untuk once),
+ *          intervalMinutes, cronExpr, actionType: text|ai_prompt|executive_briefing, payload, target }
+ */
+export function buildJobFromPanel(input = {}, { now = Date.now() } = {}) {
+  const fail = (msg) => { throw new JobInputError(msg); };
+  const type = String(input.type || '');
+  const actionType = String(input.actionType || 'text');
+  if (!ACTION_TYPES.includes(actionType)) fail('Jenis tugas tidak dikenal.');
+  const payload = String(input.payload ?? '').trim();
+  if (actionType !== 'executive_briefing' && !payload) fail('Isi pengingat/tugas wajib diisi.');
+  if (payload.length > 1000) fail('Isi pengingat/tugas maksimal 1.000 karakter.');
+  const target = String(input.target || '').trim();
+  if (!TARGET_RE.test(target)) fail('Tujuan harus nomor WhatsApp (mis. 6281234567890) atau ID grup.');
+
+  let config;
+  switch (type) {
+    case 'once': {
+      const at = typeof input.at === 'number' ? input.at : Date.parse(String(input.at || ''));
+      if (!Number.isFinite(at)) fail('Tanggal & jam pengingat belum diisi.');
+      if (at < now - 60000) fail('Waktu pengingat sudah lewat.');
+      const label = new Date(at).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
+      config = { targetTimestamp: at, readableTime: `${label} WIB` };
+      break;
+    }
+    case 'daily': {
+      const time = normalizeTime(input.time) || fail('Jam tidak valid (format 07:30).');
+      config = { time, readableTime: `Setiap hari jam ${time} WIB` };
+      break;
+    }
+    case 'weekly': {
+      const time = normalizeTime(input.time) || fail('Jam tidak valid (format 07:30).');
+      const day = Number(input.day);
+      if (!Number.isInteger(day) || day < 0 || day > 6) fail('Pilih hari.');
+      config = { day, dayName: HARI_NAMA[day], time, readableTime: `Setiap ${HARI_NAMA[day].toUpperCase()} jam ${time} WIB` };
+      break;
+    }
+    case 'interval': {
+      const m = Number(input.intervalMinutes);
+      if (!Number.isInteger(m) || m < 5 || m > 10080) fail('Selang waktu 5–10.080 menit.');
+      config = { intervalMinutes: m, readableTime: `Setiap ${m} menit` };
+      break;
+    }
+    case 'cron': {
+      const expr = String(input.cronExpr || '').trim();
+      if (!isValidCronExpression(expr)) fail('Ekspresi cron tidak valid (5 bagian: menit jam tgl bln hari).');
+      config = { cronExpr: expr, readableTime: `Cron: ${expr}` };
+      break;
+    }
+    default:
+      fail('Pilih jenis jadwal.');
+  }
+  const title = String(input.title || '').trim().slice(0, 80)
+    || (actionType === 'executive_briefing' ? 'Morning Executive Briefing' : `${type === 'once' ? 'Pengingat' : 'Jadwal'}: ${payload.slice(0, 40)}`);
+  return { title, type, config, actionType, payload: payload || title, target };
+}
+
 // Hapus jadwal berdasarkan ID
 export function removeJob(id) {
   let removed = false;
@@ -548,8 +623,8 @@ export function shouldRunJob(job, wibDate, nowTime = Date.now()) {
   const curTimeStr = `${String(wibDate.getHours()).padStart(2, '0')}:${String(wibDate.getMinutes()).padStart(2, '0')}`;
   const curDay = wibDate.getDay();
 
-  // Jangan jalankan ulang jika sudah dijalankan di menit yang sama (WIB)
-  if (job.lastRunMinute === minuteKeyOf(wibDate)) {
+  // Dijeda dari panel admin, atau sudah dijalankan di menit yang sama (WIB)
+  if (job.paused === true || job.lastRunMinute === minuteKeyOf(wibDate)) {
     return false;
   }
 

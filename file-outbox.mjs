@@ -145,3 +145,61 @@ export function cleanupOutbox(dir = MEDIA_OUTBOX_DIR, maxAgeMs = OUTBOX_RETENTIO
   }
   return removed;
 }
+
+// ---------- Panel admin: daftar, hapus, & perpanjang file outbox ----------
+const PREVIEW_DIR = '.pratinjau';
+const stemOf = (name) => name.replace(/\.[^.]+$/, '');
+
+/** Pratinjau halaman/slide milik sebuah file (path relatif terhadap outbox). */
+export function previewsOf(fileName, dir = MEDIA_OUTBOX_DIR) {
+  const stem = stemOf(fileName);
+  try {
+    return fs.readdirSync(path.join(dir, PREVIEW_DIR))
+      .filter(f => (f.startsWith(`${stem}-hal`) || f.startsWith(`${stem}-slide`)) && f.endsWith('.png'))
+      .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
+      .map(f => `${PREVIEW_DIR}/${f}`);
+  } catch { return []; }
+}
+
+/** File kiriman di outbox (tanpa folder pratinjau), terbaru dulu. */
+export function listOutboxFiles(dir = MEDIA_OUTBOX_DIR, maxAgeMs = OUTBOX_RETENTION_MS) {
+  let entries = [];
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+  const out = [];
+  for (const e of entries) {
+    if (!e.isFile() || e.name.startsWith('.')) continue;
+    try {
+      const st = fs.statSync(path.join(dir, e.name));
+      const type = fileKindOf(e.name);
+      out.push({ name: e.name, size: st.size, modifiedAt: st.mtimeMs, expiresAt: st.mtimeMs + maxAgeMs, kind: type?.kind || null, sendable: !!type, previews: previewsOf(e.name, dir) });
+    } catch {}
+  }
+  return out.sort((a, b) => b.modifiedAt - a.modifiedAt);
+}
+
+function outboxEntry(name, dir) {
+  const base = path.basename(String(name || ''));
+  if (!base || base !== String(name) || base.startsWith('.')) return null;
+  const file = path.join(dir, base);
+  try { if (!fs.lstatSync(file).isFile()) return null; } catch { return null; }
+  return { base, file };
+}
+
+/** Hapus file outbox beserta pratinjaunya. */
+export function deleteOutboxFile(name, dir = MEDIA_OUTBOX_DIR) {
+  const e = outboxEntry(name, dir);
+  if (!e) return false;
+  for (const p of previewsOf(e.base, dir)) { try { fs.unlinkSync(path.join(dir, p)); } catch {} }
+  fs.unlinkSync(e.file);
+  return true;
+}
+
+/** Perpanjang masa simpan (hitung ulang 24 jam dari sekarang), termasuk pratinjaunya. */
+export function keepOutboxFile(name, dir = MEDIA_OUTBOX_DIR, now = new Date()) {
+  const e = outboxEntry(name, dir);
+  if (!e) return false;
+  fs.utimesSync(e.file, now, now);
+  try { fs.utimesSync(path.join(dir, PREVIEW_DIR), now, now); } catch {}
+  for (const p of previewsOf(e.base, dir)) { try { fs.utimesSync(path.join(dir, p), now, now); } catch {} }
+  return true;
+}

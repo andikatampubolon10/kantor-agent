@@ -33,6 +33,11 @@ async function withServer(fn) {
       get: (id) => { if (id !== 'abcdef0123456789') throw Object.assign(new Error('Tugas tidak ditemukan.'), { status: 404 }); return { id, status: 'selesai', reply: 'hai' }; },
       reset: () => calls.push(['reset'])
     },
+    extra: {
+      'GET skills': ({ query }) => ({ items: [], q: query.get('q') }),
+      'POST memory/add': ({ body }) => { if (!body.text) throw Object.assign(new Error('Fakta kosong.'), { status: 400 }); calls.push(['mem', body.text]); return { ok: true }; },
+      'POST files/delete': () => { throw Object.assign(new Error('File tidak ditemukan.'), { status: 404 }); }
+    },
     openFile: (p) => {
       if (p === 'a.png') return { fileName: 'a.png', kind: 'image', mimetype: 'image/png', buffer: Buffer.from('png') };
       if (p === 'x.html') return { fileName: 'x.html', kind: 'document', mimetype: 'text/html', buffer: Buffer.from('<script>1</script>') };
@@ -121,6 +126,20 @@ test('panel fase 2: pemakaian, percakapan, chat, file aman', () => withServer(as
   assert.equal(html.headers.get('x-content-type-options'), 'nosniff');
   assert.equal((await req('/admin/api/file?path=hilang.pdf', { cookie })).status, 404);
   assert.equal((await req('/admin/api/file?path=a.png')).status, 401);
+}));
+
+test('panel fase 3: rute tambahan dengan login, CSRF & status galat', () => withServer(async ({ req, calls, login }) => {
+  assert.equal((await req('/admin/api/skills')).status, 401);
+  const cookie = await login();
+  assert.deepEqual(await (await req('/admin/api/skills?q=a', { cookie })).json(), { items: [], q: 'a' });
+  assert.equal((await req('/admin/api/memory/add', { method: 'POST', cookie, body: { text: 'x' }, origin: 'http://evil.test' })).status, 403);
+  assert.equal((await req('/admin/api/memory/add', { method: 'POST', cookie, body: {} })).status, 400);
+  assert.equal((await req('/admin/api/memory/add', { method: 'POST', cookie, body: { text: 'alergi udang' } })).status, 200);
+  assert.deepEqual(calls, [['mem', 'alergi udang']]);
+  const nf = await req('/admin/api/files/delete', { method: 'POST', cookie, body: { name: 'a' } });
+  assert.equal(nf.status, 404);
+  assert.match((await nf.json()).error, /tidak ditemukan/);
+  assert.equal((await req('/admin/api/skills', { method: 'POST', cookie, body: {} })).status, 404); // metode salah
 }));
 
 test('readLogChunk: baris belum lengkap ditahan, offset berlanjut', () => {

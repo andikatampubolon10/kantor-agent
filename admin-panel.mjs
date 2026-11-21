@@ -15,8 +15,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const fontFile = () => path.join(path.dirname(require.resolve('@fontsource-variable/plus-jakarta-sans/package.json')), 'files', 'plus-jakarta-sans-latin-wght-normal.woff2');
 const COOKIE = 'joko_admin';
 const MAX_BODY = 64 * 1024;
 const LOG_TAIL_BYTES = 192 * 1024;
@@ -94,7 +97,8 @@ class HttpError extends Error {
  */
 export function createAdminPanel({
   port, tokenFile, logDir, getStatus, getModelInfo, saveModelSettings, testRoute, getPairing, actions,
-  getUsage, getConversations, getConversation, chat, openFile
+  getUsage, getConversations, getConversation, chat, openFile,
+  extra = {} // { 'GET nama': ({query}) => obj, 'POST nama': ({body}) => obj } — galat boleh membawa .status
 }) {
   const token = loadOrCreateAdminToken(tokenFile);
   const sessionValue = crypto.createHmac('sha256', token).update('joko-admin-session-v1').digest('hex');
@@ -143,9 +147,18 @@ export function createAdminPanel({
         'Cache-Control': 'no-store',
         'X-Frame-Options': 'DENY',
         'Referrer-Policy': 'no-referrer',
-        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
       });
       res.end(html);
+      return;
+    }
+
+    // Huruf panel (Plus Jakarta Sans, SIL OFL) disajikan lokal agar panel tetap jalan tanpa internet.
+    if (method === 'GET' && p === '/admin/assets/font.woff2') {
+      let buf;
+      try { buf = fs.readFileSync(fontFile()); } catch { throw new HttpError(404, 'Huruf tidak ditemukan.'); }
+      res.writeHead(200, { 'Content-Type': 'font/woff2', 'Cache-Control': 'public, max-age=604800', 'X-Content-Type-Options': 'nosniff' });
+      res.end(buf);
       return;
     }
 
@@ -237,6 +250,16 @@ export function createAdminPanel({
       });
       res.end(f.buffer);
       return;
+    }
+
+    const key = `${method} ${api}`;
+    if (Object.hasOwn(extra, key)) {
+      const body = method === 'POST' ? await readBody(req) : {};
+      try { return send(res, 200, (await extra[key]({ query: url.searchParams, body })) ?? { ok: true }); }
+      catch (err) {
+        if (!err.status) console.error(`[Admin] ${key} gagal:`, err.message);
+        throw new HttpError(err.status || 400, err.message);
+      }
     }
 
     const m = api.match(/^actions\/([a-z-]+)$/);

@@ -130,3 +130,36 @@ test('[Sedang] file jadwal rusak dicadangkan, bukan ditimpa diam-diam', () => {
   assert.equal(backups.length, 1);
   assert.equal(fs.readFileSync(backups[0], 'utf8'), '{ ini bukan json');
 });
+
+test('panel: jadwal dari formulir divalidasi, bisa diubah & dijeda', () => {
+  const now = Date.parse('2026-11-21T03:00:00Z');
+  const daily = cron.buildJobFromPanel({ type: 'daily', time: '7.30', actionType: 'text', payload: 'minum air', target: OWNER }, { now });
+  assert.deepEqual(daily.config, { time: '07:30', readableTime: 'Setiap hari jam 07:30 WIB' });
+  assert.equal(daily.title, 'Jadwal: minum air');
+  const weekly = cron.buildJobFromPanel({ type: 'weekly', time: '09:00', day: 1, actionType: 'ai_prompt', payload: 'rekap minggu lalu', target: '120363000000000000@g.us' }, { now });
+  assert.equal(weekly.config.dayName, 'senin');
+  const once = cron.buildJobFromPanel({ type: 'once', at: now + 3600000, payload: 'rapat', target: OWNER }, { now });
+  assert.equal(once.config.targetTimestamp, now + 3600000);
+  assert.match(once.config.readableTime, /WIB$/);
+  const brief = cron.buildJobFromPanel({ type: 'cron', cronExpr: '0 7 * * 1-5', actionType: 'executive_briefing', target: OWNER }, { now });
+  assert.equal(brief.title, 'Morning Executive Briefing');
+  for (const [bad, re] of [
+    [{ type: 'daily', time: '25:00', payload: 'x', target: OWNER }, /Jam/],
+    [{ type: 'once', at: now - 3600000, payload: 'x', target: OWNER }, /lewat/],
+    [{ type: 'interval', intervalMinutes: 1, payload: 'x', target: OWNER }, /Selang/],
+    [{ type: 'cron', cronExpr: '* *', payload: 'x', target: OWNER }, /cron/],
+    [{ type: 'daily', time: '07:00', payload: '', target: OWNER }, /wajib/],
+    [{ type: 'daily', time: '07:00', payload: 'x', target: 'bukan nomor' }, /Tujuan/],
+    [{ type: 'daily', time: '07:00', payload: 'x', target: OWNER, actionType: 'hapus_semua' }, /Jenis tugas/]
+  ]) assert.throws(() => cron.buildJobFromPanel(bad, { now }), (e) => e instanceof cron.JobInputError && re.test(e.message));
+
+  fs.writeFileSync('cron-jobs.json', '[]');
+  const job = cron.addJob({ ...daily, creator: OWNER });
+  assert.ok(cron.shouldRunJob(job, wib(2026, 11, 21, 7, 30)));
+  const paused = cron.updateJob(job.id, { paused: true, id: 'lain', createdAt: 'x' });
+  assert.equal(paused.id, job.id); // id & createdAt tidak bisa diubah
+  assert.equal(paused.createdAt, job.createdAt);
+  assert.equal(cron.shouldRunJob(paused, wib(2026, 11, 21, 7, 30)), false);
+  assert.equal(cron.claimDueJobs(wib(2026, 11, 21, 7, 30)).length, 0);
+  assert.equal(cron.updateJob('tidak-ada', {}), null);
+});

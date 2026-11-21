@@ -547,3 +547,20 @@ export async function closeBaileys(timeoutMs = 4000) {
   await Promise.race([work, new Promise(r => setTimeout(r, timeoutMs))]);
 }
 
+
+// Nama grup (subject) untuk panel admin; di-cache 1 jam, gagal/terputus -> null.
+const groupSubjectCache = new Map();
+export async function getGroupSubject(jid, timeoutMs = 4000) {
+  if (!String(jid).endsWith('@g.us')) return null;
+  const hit = groupSubjectCache.get(jid);
+  if (hit && Date.now() - hit.at < 3600000) return hit.subject;
+  if (!sock || !isOpen) return hit?.subject ?? null;
+  try {
+    const meta = await Promise.race([sock.groupMetadata(jid), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeoutMs))]);
+    const subject = meta?.subject ? String(meta.subject).slice(0, 100) : null;
+    groupSubjectCache.set(jid, { subject, at: Date.now() });
+    return subject;
+  } catch {
+    return hit?.subject ?? null;
+  }
+}
