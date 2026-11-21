@@ -30,7 +30,7 @@ function stubDeps(over = {}) {
 
 test('daftar tool lengkap & skema valid', () => {
   const names = TOOL_DEFINITIONS.map(t => t.name);
-  assert.deepEqual(names, ['transjakarta_live', 'baca_halaman_web', 'cari_berita', 'briefing_eksekutif', 'daftar_jadwal', 'status_joko']);
+  assert.deepEqual(names, ['transjakarta_live', 'baca_halaman_web', 'cari_berita', 'briefing_eksekutif', 'daftar_jadwal', 'status_joko', 'buat_file']);
   for (const t of TOOL_DEFINITIONS) {
     assert.equal(t.inputSchema.type, 'object', t.name);
     assert.ok(t.description.length > 20, t.name);

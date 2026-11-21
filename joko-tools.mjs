@@ -5,7 +5,8 @@
  * (radar GPS Transjakarta via MQTT, cache rute, jadwal) hanya ada di proses itu.
  * Server MCP hanya meneruskan panggilan lewat HTTP lokal bertoken.
  *
- * Semua tool bersifat baca/ambil data. Aksi berdampak publik (posting Threads,
+ * Semua tool bersifat baca/ambil data, kecuali buat_file yang hanya menulis ke folder
+ * outbox (pengiriman tetap lewat blok kirim-file yang diperiksa). Aksi berdampak publik (posting Threads,
  * mengirim pesan, memberi akses) sengaja TIDAK dijadikan tool: aksi itu tetap
  * lewat jalur yang diawasi router (ownerRequestedThreadsPost, dsb.).
  * Hasil dari sumber luar dibungkus sebagai DATA TIDAK TERPERCAYA.
@@ -92,6 +93,26 @@ export const TOOL_DEFINITIONS = Object.freeze([
     name: 'status_joko',
     description: 'Status sistem Joko: koneksi WhatsApp, antrean tugas agen, radar Transjakarta, jumlah memori.',
     inputSchema: { type: 'object', properties: {} }
+  },
+  {
+    name: 'buat_file',
+    description: 'Membuat file rapi siap kirim ke WhatsApp dari spesifikasi JSON: PDF, Excel (xlsx), Word (docx), PowerPoint (pptx), atau grafik PNG. Gaya seragam, format Rupiah & tanggal Indonesia, total otomatis. File disimpan di folder outbox; PDF disertai gambar pratinjau halaman 1 untuk diperiksa. Lihat skill joko-dokumen untuk contoh spesifikasi.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        format: { type: 'string', enum: ['pdf', 'xlsx', 'docx', 'pptx', 'png'] },
+        nama_file: { type: 'string', description: 'Nama file deskriptif, mis. "rekap-pengeluaran-nov-2026" (ekstensi otomatis).' },
+        judul: { type: 'string' },
+        subjudul: { type: 'string' },
+        tanggal: { type: 'string', description: 'Opsional; default tanggal hari ini (WIB).' },
+        orientasi: { type: 'string', enum: ['potret', 'lanskap'] },
+        isi: { type: 'array', description: 'pdf/docx: daftar blok {jenis: judul|paragraf|daftar|tabel|grafik|catatan|pemisah_halaman, ...}.', items: { type: 'object' } },
+        lembar: { type: 'array', description: 'xlsx: daftar sheet {nama, judul?, kolom, baris, total?, grafik?}.', items: { type: 'object' } },
+        slide: { type: 'array', description: 'pptx: daftar slide {judul, butir?, tabel?, grafik?, catatan?}.', items: { type: 'object' } },
+        grafik: { type: 'object', description: 'png: {jenis: batang|batang_horizontal|garis|pai|donat, judul, label, seri:[{nama, data}], format: rupiah|angka|persen}.' }
+      },
+      required: ['format']
+    }
   }
 ]);
 
@@ -152,6 +173,25 @@ export function createToolRunner(deps) {
     async status_joko() {
       const s = deps.getStatus();
       return Object.entries(s).map(([k, v]) => `• ${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join('\n');
+    },
+
+    async buat_file(args) {
+      let r;
+      try {
+        r = await deps.buildDocument(args);
+      } catch (err) {
+        if (err?.name === 'DocumentSpecError') throw new ToolInputError(`spesifikasi tidak valid: ${err.message}`);
+        throw err;
+      }
+      const kb = Math.max(1, Math.round(r.bytes / 1024));
+      const lines = [
+        `File dibuat: ${r.fileName} (${r.info}, ${kb} KB).`,
+        r.previewPath && r.format !== 'png'
+          ? `Pratinjau halaman 1: ${r.previewPath} — buka dengan read_file dan periksa tampilannya (teks terpotong, tabel meluber, angka/total salah) sebelum mengirim; bila ada yang salah, perbaiki spesifikasi lalu panggil buat_file lagi dengan nama_file yang sama.`
+          : (r.format === 'png' ? `Periksa gambar dengan read_file: ${r.previewPath}` : 'Periksa kembali kolom, total, dan isi yang Anda kirim di spesifikasi.'),
+        `Kirim dengan blok di baris paling akhir jawaban: \`\`\`kirim-file\n{ "path": "${r.fileName}", "caption": "..." }\n\`\`\``
+      ];
+      return lines.join('\n');
     }
   };
 
