@@ -4,7 +4,6 @@ logs/
 *.log
 # data runtime tidak pernah ada di repo (disimpan di ~/.cache/kantor-agent/)
 .cache/
-cloudflared.exe
 .wa-assistant-session.json
 .joko-state.json
 .joko-memory.json
@@ -17,19 +16,10 @@ cron-jobs.json
 .vscode/
 .chrome-threads-profile/
 .latest-briefing-draft.txt
+# rahasia: kunci, cookie & salinan database cookie browser
 *.pem
-deploy-aws.mjs
-deploy-aws.bat
-connect-aws.bat
-sync-to-aws.bat
-sync-threads-login.bat
+*.sqlite
 threads-cookies.json
-extract-main-cookies.mjs
-decrypt-cookies.mjs
-export-threads-session.mjs
-check-ec2.mjs
-resize-volume.mjs
-threads-profile.tar.gz
 .env
 baileys_auth_info/
 pairing-code.txt
@@ -38,6 +28,7 @@ baileys-qr.png
 *.tmp-*
 *.corrupt-*
 threads-debug-*.png
+threads-success.png
 wa-qr.txt
 # lampiran gambar/voice note dari WhatsApp (dihapus otomatis setelah 24 jam)
 media-inbox/
