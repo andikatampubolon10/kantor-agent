@@ -387,6 +387,9 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
   textarea.editor { min-height: 360px; }
   #usageKpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   #usageKpi .card { padding: 14px; } #usageKpi .stat-big { font-size: 19px; }
+  #tradeKpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  #tradeKpi .card { padding: 14px; } #tradeKpi .stat-big { font-size: 17px; }
+  #page-trading .head .row { width: 100%; }
   #toolKpi { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   #toolKpi .card { padding: 14px; } #toolKpi .stat-big { font-size: 19px; }
   .tool-grid { grid-template-columns: minmax(0, 1fr); }
@@ -430,6 +433,7 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
       <a href="#/beranda" data-page="beranda"><span class="ti t-coral"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg></span><span>Beranda</span></a>
       <a href="#/pemakaian" data-page="pemakaian"><span class="ti t-sky"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg></span><span>Pemakaian</span></a>
       <a href="#/percakapan" data-page="percakapan"><span class="ti t-rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></span><span>Percakapan</span></a>
+      <a href="#/trading" data-page="trading"><span class="ti t-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></span><span>Paper Trading</span></a>
       <div class="nav-sec">Pengaturan</div>
       <a href="#/model" data-page="model"><span class="ti t-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v6M6 15v6M18 3v10M18 19v2M12 3v2M12 11v10"/><circle cx="6" cy="12" r="2.5"/><circle cx="12" cy="8" r="2.5"/><circle cx="18" cy="16" r="2.5"/></svg></span><span>Model &amp; Routing</span></a>
       <a href="#/skill" data-page="skill"><span class="ti t-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7l9 5 9-5-9-5z"/><path d="m3 12 9 5 9-5M3 17l9 5 9-5"/></svg></span><span>Skill</span></a>
@@ -613,6 +617,37 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
           <textarea id="skillText" class="editor" spellcheck="false" disabled placeholder="Pilih skill di kiri untuk melihat atau mengubah isinya."></textarea>
           <p id="skillErr" class="small" style="color:var(--bad);margin:8px 0 0;white-space:pre-wrap;min-height:18px"></p>
         </div>
+      </div>
+    </section>
+
+    <!-- PAPER TRADING -->
+    <section id="page-trading" class="hidden">
+      <div class="head">
+        <div><h1>Paper Trading</h1><p class="sub">Eksperimen trading kripto Joko dengan <b>uang simulasi</b> dan harga asli Indodax. Tidak ada order sungguhan.</p></div>
+        <div class="row">
+          <button class="btn primary" type="button" id="tradeRun">Analisis sekarang</button>
+          <button class="btn" type="button" id="tradePause">Jeda</button>
+          <button class="btn danger" type="button" id="tradeStop">Stop darurat</button>
+        </div>
+      </div>
+      <p class="small" id="tradeBanner" style="margin:0 0 14px"></p>
+      <div class="grid g4" id="tradeKpi"></div>
+      <div class="card" style="margin-top:16px">
+        <div class="stat-top"><h2 style="margin:0">Kurva ekuitas</h2><div class="legend" id="tradeLegend"></div></div>
+        <div id="tradeChart" class="chart"></div>
+      </div>
+      <div class="grid g2" style="margin-top:16px">
+        <div class="card"><h2>Posisi</h2><div class="table-wrap" id="tradePos"></div></div>
+        <div class="card"><h2>Harga pasar</h2><div class="table-wrap" id="tradeMarket"></div></div>
+      </div>
+      <div class="grid g2" style="margin-top:16px">
+        <div class="card"><h2>Keputusan AI</h2><div class="list-card" id="tradeDecisions" style="max-height:520px;overflow:auto"></div></div>
+        <div class="card"><h2>Transaksi</h2><div class="table-wrap" id="tradeTrades" style="max-height:520px;overflow:auto"></div></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="stat-top"><h2 style="margin:0">Aturan pengaman</h2><button class="btn sm" type="button" id="tradeReset">Ulang dari awal</button></div>
+        <div class="chips" id="tradeRules"></div>
+        <p class="small muted" style="margin:12px 0 0">Aturan ditegakkan oleh kode, bukan oleh AI: usulan yang melanggar otomatis ditolak. Perintah WhatsApp: <i>"Joko status trading"</i>, <i>"Joko stop trading"</i>, <i>"Joko lanjut trading"</i>, <i>"Joko analisis trading sekarang"</i>.</p>
       </div>
     </section>
 
@@ -907,7 +942,7 @@ function stopAll() { timers.forEach(clearInterval); timers = []; }
 function every(fn, msInterval) { fn(); timers.push(setInterval(() => { if (!document.hidden) fn(); }, msInterval)); }
 function route() {
   const page = (location.hash.match(/^#\/(\w+)/) || [])[1] || 'beranda';
-  const titles = { beranda: 'Beranda', pemakaian: 'Pemakaian', percakapan: 'Percakapan', model: 'Model & Routing', skill: 'Skill', tools: 'Tools & MCP', jadwal: 'Jadwal', memori: 'Memori & Kontak', file: 'File', log: 'Log' };
+  const titles = { beranda: 'Beranda', pemakaian: 'Pemakaian', percakapan: 'Percakapan', trading: 'Paper Trading', model: 'Model & Routing', skill: 'Skill', tools: 'Tools & MCP', jadwal: 'Jadwal', memori: 'Memori & Kontak', file: 'File', log: 'Log' };
   const valid = titles[page] ? page : 'beranda';
   stopAll();
   window.scrollTo(0, 0);
@@ -922,6 +957,7 @@ function route() {
   if (valid === 'percakapan') { startConvo(); every(loadSide, 10000); }
   if (valid === 'log') { startLog(); every(loadSide, 10000); }
   if (valid === 'skill') { loadSkills(); every(loadSide, 10000); }
+  if (valid === 'trading') { every(loadTrading, 15000); every(loadSide, 10000); }
   if (valid === 'tools') { every(() => loadTools(), 20000); every(loadSide, 10000); }
   if (valid === 'jadwal') { every(loadJobList, 15000); every(loadSide, 10000); }
   if (valid === 'memori') { loadMemory(); loadContacts(); every(loadSide, 10000); }
@@ -1650,6 +1686,117 @@ $('#jobForm').addEventListener('submit', async (ev) => {
   } catch (e) { $('#jobErr').textContent = e.message; }
   finally { btn.disabled = false; }
 });
+
+// ---------- Paper Trading ----------
+let tradeData = null;
+const PAIR = { btc_idr: 'BTC', eth_idr: 'ETH' };
+const rpx = (n) => n == null ? '—' : 'Rp' + Math.round(n).toLocaleString('id-ID');
+// Ringkas untuk harga besar: Rp1,1089 M (miliar) / Rp31,072 jt
+const rpc = (n) => n == null ? '—' : n >= 1e9 ? `Rp${(n / 1e9).toLocaleString('id-ID', { maximumFractionDigits: 4 })} M` : n >= 1e6 ? `Rp${(n / 1e6).toLocaleString('id-ID', { maximumFractionDigits: 3 })} jt` : rpx(n);
+const pctx = (x) => x == null ? '—' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(2)}%`;
+const toneOf = (x) => x == null ? '' : x >= 0 ? 'color:var(--ok)' : 'color:var(--bad)';
+function lineChart(el, series) {
+  const W = Math.max(280, Math.round(el.clientWidth || 600)), H = 220, padL = 64, padB = 26, padT = 10;
+  const pts = series.flatMap(s => s.points);
+  if (pts.length < 2) { el.innerHTML = '<div class="empty">Kurva muncul setelah beberapa titik data (dicatat tiap 15 menit).</div>'; return; }
+  const t0 = Math.min(...pts.map(p => p.t)), t1 = Math.max(...pts.map(p => p.t));
+  let v0 = Math.min(...pts.map(p => p.v)), v1 = Math.max(...pts.map(p => p.v));
+  const padV = Math.max((v1 - v0) * 0.1, v1 * 0.002); v0 -= padV; v1 += padV;
+  const x = (t) => padL + (W - padL - 8) * ((t - t0) / Math.max(1, t1 - t0));
+  const y = (v) => padT + (H - padT - padB) * (1 - (v - v0) / (v1 - v0));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Kurva ekuitas">`;
+  for (let i = 0; i <= 4; i++) {
+    const v = v0 + (v1 - v0) * i / 4;
+    svg += `<line class="grid-line" x1="${padL}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/><text class="axis" x="${padL - 8}" y="${y(v) + 4}" text-anchor="end">${(v / 1e6).toFixed(2)} jt</text>`;
+  }
+  const fmtT = (t) => new Date(t).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  svg += `<text class="axis" x="${padL}" y="${H - 6}">${fmtT(t0)}</text><text class="axis" x="${W}" y="${H - 6}" text-anchor="end">${fmtT(t1)}</text>`;
+  for (const s of series) {
+    if (s.points.length < 2) continue;
+    svg += `<polyline fill="none" stroke="${s.color}" stroke-width="${s.width || 2}" ${s.dash ? 'stroke-dasharray="5 4"' : ''} stroke-linejoin="round" points="${s.points.map(p => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>`;
+  }
+  el.innerHTML = svg + '</svg>';
+}
+async function loadTrading() {
+  try { tradeData = await api('trading'); } catch (e) { if (e.status !== 401) $('#tradeKpi').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const d = tradeData;
+  if (!d.started) {
+    $('#tradeKpi').innerHTML = `<div class="card"><div class="empty">Paper trading sedang disiapkan (data harga pertama diambil dalam 1 menit).${d.lastError ? ' Galat terakhir: ' + esc(d.lastError.message) : ''}</div></div>`;
+    return;
+  }
+  const s = d.stats || {};
+  const banner = d.halted ? `<span class="pill bad">Dihentikan</span> ${esc(d.halted.reason)}`
+    : d.paused ? '<span class="pill warn">Dijeda</span> Tidak ada analisis/transaksi baru.'
+    : d.deciding ? '<span class="pill warn">Menganalisis…</span> Joko sedang membaca pasar.'
+    : `<span class="pill ok">Berjalan</span> Analisis berikutnya ${d.nextDecisionAt ? fmtTime(d.nextDecisionAt) : '—'} WIB.`;
+  $('#tradeBanner').innerHTML = banner + (d.lastError ? ` <span class="small" style="color:var(--bad)">· Galat terakhir: ${esc(d.lastError.message)}</span>` : '');
+  $('#tradePause').textContent = d.paused ? 'Lanjutkan' : 'Jeda';
+  $('#tradeStop').textContent = d.halted ? 'Lanjutkan trading' : 'Stop darurat';
+  $('#tradeStop').classList.toggle('danger', !d.halted);
+  $('#tradeRun').disabled = !!(d.deciding || d.paused || d.halted);
+
+  $('#tradeKpi').innerHTML = [
+    kpi('Ekuitas (simulasi)', rpx(s.equity), `<span style="${toneOf(s.returnPct)}">${pctx(s.returnPct)}</span> dari modal ${rpx(d.rules.startingCash)}`),
+    kpi('Beli-lalu-diam', rpx(s.benchmarkEquity), `<span style="${toneOf(s.benchmarkReturnPct)}">${pctx(s.benchmarkReturnPct)}</span> pembanding`),
+    kpi('Hari ini', `<span style="${toneOf(s.dayPnl)}">${s.dayPnl >= 0 ? '+' : ''}${rpx(s.dayPnl)}</span>`, `${s.tradesToday}/${d.rules.maxTradesPerDay} transaksi`),
+    kpi('Total', `${fmtNum(s.trades)} transaksi`, `biaya ${rpx(s.feesPaid)} · drawdown ${(s.maxDrawdownPct * 100).toFixed(2)}%${s.winRate != null ? ` · win ${(s.winRate * 100).toFixed(0)}%` : ''}`)
+  ].join('');
+
+  $('#tradeLegend').innerHTML = '<span><i style="background:#f26a2a"></i>Joko</span><span><i style="background:#6cb2ff"></i>Beli-lalu-diam</span>';
+  lineChart($('#tradeChart'), [
+    { name: 'Beli-lalu-diam', color: '#6cb2ff', dash: true, points: d.equity.map(p => ({ t: p.t, v: p.bench })) },
+    { name: 'Joko', color: '#f26a2a', width: 2.5, points: d.equity.map(p => ({ t: p.t, v: p.equity })) }
+  ]);
+
+  const posRows = d.positions.map(p => {
+    const g = p.value != null ? (p.value - p.cost) / p.cost : null;
+    return `<tr><td><b>${esc(PAIR[p.pair] || p.pair)}</b><div class="small muted mono">${p.qty.toPrecision(6)}</div></td><td>${rpx(p.cost)}</td><td>${rpx(p.value)}</td><td style="${toneOf(g)}">${pctx(g)}</td></tr>`;
+  }).join('');
+  $('#tradePos').innerHTML = `<table><thead><tr><th>Aset</th><th>Modal</th><th>Nilai</th><th>Hasil</th></tr></thead><tbody>
+    <tr><td><b>Kas</b></td><td colspan="2">${rpx(s.cash)}</td><td></td></tr>${posRows}</tbody></table>`;
+  $('#tradeMarket').innerHTML = d.market ? `<table><thead><tr><th>Pair</th><th>Bid (jual)</th><th>Ask (beli)</th></tr></thead><tbody>${
+    Object.entries(d.market).map(([p, m]) => `<tr><td><b>${esc(PAIR[p] || p)}</b><div class="small muted">24 jam: ${rpc(m.low)} – ${rpc(m.high)}</div></td><td class="small" title="${rpx(m.bid)}">${rpc(m.bid)}</td><td class="small" title="${rpx(m.ask)}">${rpc(m.ask)}</td></tr>`).join('')
+  }</tbody></table><p class="small muted" style="margin:10px 16px 14px">Harga Indodax · diperbarui ${ago(Object.values(d.market)[0]?.t)}</p>` : '<div class="empty">Belum ada data harga.</div>';
+
+  $('#tradeDecisions').innerHTML = d.decisions.length ? d.decisions.map(x => `<div class="li" style="cursor:default;display:block">
+      <div class="row" style="justify-content:space-between"><b>${fmtTime(x.t)}</b><span class="small muted">${esc(x.trigger)}${x.model ? ' · ' + esc(shortModel(x.model)) : ''}</span></div>
+      ${x.ok ? `<div class="small" style="margin:6px 0">${esc(x.analysis || '—')}</div>` : `<div class="small" style="color:var(--bad);margin:6px 0">Gagal: ${esc(x.error)}</div>`}
+      ${x.ok ? (x.actions.length ? `<div class="chips">${x.actions.map(a => `<span class="chip ${a.ok ? 'req' : ''}" title="${esc(a.reason || '')}${a.error ? ' — ditolak: ' + esc(a.error) : ''}" ${a.ok ? '' : 'style="text-decoration:line-through"'}>${esc(a.side)} ${esc(PAIR[a.pair] || a.pair)} ${a.side === 'beli' ? rpx(a.amountIdr) : Math.round((a.portion || 0) * 100) + '%'}</span>`).join('')}</div>` : '<span class="pill">Tahan</span>') : ''}
+    </div>`).join('') : '<div class="empty">Belum ada keputusan.</div>';
+
+  $('#tradeTrades').innerHTML = d.trades.length ? `<table><thead><tr><th>Waktu</th><th>Transaksi</th><th>Harga</th><th>Laba/rugi</th></tr></thead><tbody>${
+    d.trades.map(t => `<tr><td class="small">${fmtTime(t.t)}</td><td>${t.side === 'beli' ? '<span class="pill ok">Beli</span>' : '<span class="pill bad">Jual</span>'} <b>${esc(PAIR[t.pair] || t.pair)}</b> ${rpx(t.valueIdr)}<div class="small muted">${esc(t.reason)}</div></td><td class="small">${rpx(t.price)}</td><td class="small" style="${toneOf(t.realizedPnl)}">${t.realizedPnl != null ? rpx(t.realizedPnl) : '—'}</td></tr>`).join('')
+  }</tbody></table>` : '<div class="empty">Belum ada transaksi. Menahan (tidak bertransaksi) juga keputusan yang sah.</div>';
+
+  const r = d.rules;
+  $('#tradeRules').innerHTML = [
+    `Pair: ${r.pairs.map(p => PAIR[p] || p).join(', ')}`, `Beli maks ${r.maxOrderPct * 100}% ekuitas/order`, `Satu aset maks ${r.maxPositionPct * 100}%`,
+    `Rugi harian ${r.dailyLossLimitPct * 100}% → berhenti`, `Maks ${r.maxTradesPerDay} transaksi/hari`, `Minimal ${rpx(r.minOrderIdr)}`,
+    `Biaya ${(r.feeRate * 100).toFixed(1)}% + spread`, `Analisis tiap ${r.decisionEveryHours} jam`, 'Tanpa leverage & short'
+  ].map(t => `<span class="chip">${esc(t)}</span>`).join('');
+}
+$('#tradeRun').onclick = async () => {
+  try { toast((await api('trading/run', { method: 'POST', body: {} })).message); } catch (e) { toast(e.message, true); }
+  setTimeout(loadTrading, 1500);
+};
+$('#tradePause').onclick = async () => {
+  try { const r = await api('trading/pause', { method: 'POST', body: { paused: !tradeData?.paused } }); toast(r.paused ? 'Paper trading dijeda.' : 'Paper trading dilanjutkan.'); } catch (e) { toast(e.message, true); }
+  loadTrading();
+};
+$('#tradeStop').onclick = async () => {
+  if (tradeData?.halted) {
+    try { await api('trading/resume', { method: 'POST', body: {} }); toast('Paper trading dilanjutkan.'); } catch (e) { toast(e.message, true); }
+  } else {
+    if (!await confirmDialog({ title: 'Stop darurat?', html: 'Tidak ada analisis atau transaksi baru sampai Anda melanjutkannya. Posisi yang ada tetap disimpan.', okText: 'Stop', danger: true })) return;
+    try { await api('trading/stop', { method: 'POST', body: {} }); toast('Paper trading dihentikan.'); } catch (e) { toast(e.message, true); }
+  }
+  loadTrading();
+};
+$('#tradeReset').onclick = async () => {
+  if (!await confirmDialog({ title: 'Ulang dari awal?', html: 'Semua transaksi, keputusan, dan kurva ekuitas simulasi dihapus, lalu mulai lagi dengan modal Rp10.000.000. Ketik <b>RESET</b> untuk melanjutkan.', okText: 'Ulang', danger: true, typeWord: 'RESET' })) return;
+  try { await api('trading/reset', { method: 'POST', body: { confirm: 'RESET' } }); toast('Paper trading dimulai ulang.'); } catch (e) { toast(e.message, true); }
+  loadTrading();
+};
 
 // ---------- Tools & MCP ----------
 let toolData = null, testingTool = null;

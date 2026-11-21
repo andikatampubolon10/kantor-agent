@@ -89,6 +89,7 @@ import {
   normalizeModelSettings, builtinTriggers, KNOWN_MODELS
 } from './model-router.mjs';
 import { createAdminPanel } from './admin-panel.mjs';
+import { createTradingRunner, createIndodaxMarket } from './trading-runner.mjs';
 import {
   connectorStatus,
   normalizeConnectorSettings,
@@ -1373,6 +1374,10 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
         if (isOwner && userPrompt && !media && await handleOwnerMemoryCommand(userPrompt, targetRecipient, isGroup)) {
           return;
         }
+        // Paper trading: "status trading", "stop trading", "lanjut trading" (OWNER saja)
+        if (isOwner && userPrompt && !media && await handleTradingCommand(userPrompt, targetRecipient)) {
+          return;
+        }
 
         if (isGroup) {
           if (!userPrompt && !media && !quoted) {
@@ -1941,6 +1946,74 @@ let runScheduledJob = null; // diisi saat scheduler dimulai (lihat server.listen
 const OWNER_NUMBER = [...AUTHORIZED_TARGETS][0];
 const panelError = (message, status = 400) => Object.assign(new Error(message), { status });
 
+// ---------- Paper trading (uang simulasi) — lihat paper-trading.mjs & trading-runner.mjs ----------
+const TRADING_PERSONA = 'Kamu Joko, analis portofolio untuk eksperimen PAPER TRADING (uang simulasi) milik Mas Andika. Jawab hanya dengan format yang diminta.';
+const trading = createTradingRunner({
+  file: path.join(process.cwd(), '.joko-trading.json'),
+  market: createIndodaxMarket(),
+  decide: async (prompt) => {
+    const queued = enqueueAgentTask({
+      label: 'trading',
+      chatId: 'trading',
+      run: () => askAgyCli(prompt, { persona: TRADING_PERSONA, routeText: 'analisis trading', label: 'trading' })
+    });
+    if (!queued.accepted) throw new Error('antrean agen penuh');
+    const text = await queued.done;
+    return { text, model: recentAgentRuns.find(r => r.label === 'trading')?.model || null };
+  },
+  notify: (text) => sendWhatsApp(OWNER_NUMBER, text)
+});
+
+/** Perintah WhatsApp owner: "status trading", "stop trading", "lanjut trading", "analisis trading sekarang". */
+async function handleTradingCommand(text, targetRecipient) {
+  const t = String(text || '').trim().toLowerCase().replace(/^joko[,\s]+/, '').replace(/[.!?]+$/, '');
+  if (!/\btrading\b/.test(t) || t.split(/\s+/).length > 5) return false;
+  if (/^(status|laporan|cek|gimana)\s+(paper\s+)?trading/.test(t)) {
+    await sendWhatsApp(targetRecipient, trading.report());
+  } else if (/^(stop|hentikan|matikan|berhenti)\s+(paper\s+)?trading/.test(t)) {
+    trading.stop('dihentikan Mas Andika lewat WhatsApp');
+    console.log('[Trading] ⛔ Dihentikan owner lewat WhatsApp.');
+    await sendWhatsApp(targetRecipient, '⛔ Paper trading dihentikan. Tidak ada transaksi baru sampai Mas bilang *"Joko lanjut trading"*.');
+  } else if (/^(lanjut|lanjutkan|mulai|jalankan)\s+(lagi\s+)?(paper\s+)?trading/.test(t)) {
+    trading.resume();
+    console.log('[Trading] ▶️ Dilanjutkan owner lewat WhatsApp.');
+    await sendWhatsApp(targetRecipient, '▶️ Paper trading dilanjutkan.');
+  } else if (/^analisis\s+(paper\s+)?trading(\s+sekarang)?$/.test(t)) {
+    await sendWhatsApp(targetRecipient, '🤖 Joko menganalisis pasar sekarang, hasilnya menyusul...');
+    trading.runDecision('manual')
+      .then(rec => { if (!rec.actions.length) sendWhatsApp(targetRecipient, `🤖 Keputusan: *tahan* (tanpa transaksi).\n_${rec.analysis}_`); })
+      .catch(err => sendWhatsApp(targetRecipient, `⚠️ Analisis trading gagal: ${err.message}`));
+  } else {
+    return false;
+  }
+  return true;
+}
+
+function tradingStatusForPanel() {
+  const s = trading.status();
+  const st = s.state;
+  if (!st) return { started: false, lastError: s.lastError };
+  // Kurva ekuitas: maks. ~400 titik agar ringan di HP.
+  const step = Math.max(1, Math.ceil(st.equity.length / 400));
+  return {
+    started: true,
+    startedAt: st.startedAt,
+    rules: st.rules,
+    paused: st.paused,
+    halted: st.halted,
+    stats: s.stats,
+    market: s.market,
+    deciding: s.deciding,
+    lastError: s.lastError,
+    nextDecisionAt: s.nextDecisionAt,
+    positions: Object.entries(st.positions).map(([pair, p]) => ({ pair, qty: p.qty, cost: p.cost, value: s.market?.[pair] ? p.qty * s.market[pair].bid : null })),
+    trades: st.trades.slice(-60).reverse(),
+    decisions: st.decisions.slice(-30).reverse(),
+    equity: st.equity.filter((_, i) => i % step === 0 || i === st.equity.length - 1),
+    now: Date.now()
+  };
+}
+
 /** Grup yang dikenal Joko: yang diberi akses + yang pernah memanggil Joko (30 hari). */
 async function knownGroups() {
   const allowed = loadAllowedGroups();
@@ -1987,6 +2060,21 @@ const BUILTIN_TOOLS = [
 ];
 
 const panelExtra = {
+  // Paper trading
+  'GET trading': () => tradingStatusForPanel(),
+  'POST trading/run': () => {
+    trading.runDecision('panel').catch(err => console.warn(`[Trading] ⚠️ Analisis dari panel gagal: ${err.message}`));
+    return { message: 'Analisis dimulai. Hasil muncul di sini dalam 1–2 menit.' };
+  },
+  'POST trading/pause': ({ body }) => ({ paused: trading.pause(body.paused === true) }),
+  'POST trading/stop': () => { trading.stop('dihentikan Mas Andika dari panel'); console.log('[Trading] ⛔ Dihentikan dari panel.'); return { ok: true }; },
+  'POST trading/resume': () => { trading.resume(); console.log('[Trading] ▶️ Dilanjutkan dari panel.'); return { ok: true }; },
+  'POST trading/reset': async ({ body }) => {
+    if (String(body.confirm || '').trim().toUpperCase() !== 'RESET') throw panelError('Ketik RESET untuk konfirmasi.');
+    const st = await trading.reset(body.startingCash);
+    console.log(`[Trading] 🔄 Paper trading diulang dari awal (modal ${st.rules.startingCash}).`);
+    return { ok: true };
+  },
   // Connector (Google, Canva, Perplexity): izinkan/larang untuk agen owner
   'POST connectors/allow': ({ body }) => {
     const id = String(body.id || '');
@@ -2402,6 +2490,9 @@ server.listen(PORT, '127.0.0.1', async () => {
   } catch (bErr) {
     console.error('[Baileys Startup] Error:', bErr.message);
   }
+
+  // Paper trading (uang simulasi): catat harga tiap 15 menit, analisis AI tiap beberapa jam.
+  if (process.env.JOKO_PAPER_TRADING !== 'off') trading.start();
 
   // Mulai Engine Cron Scheduler
   startCronScheduler(runScheduledJob = async (job) => {

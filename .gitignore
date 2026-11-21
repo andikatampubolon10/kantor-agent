@@ -37,3 +37,5 @@ media-outbox/
 .joko-admin-token
 .joko-settings.json
 baileys_auth_backup_*/
+# paper trading (simulasi)
+.joko-trading.json
