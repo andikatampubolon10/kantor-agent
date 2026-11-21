@@ -21,16 +21,18 @@ export const CONNECTORS = Object.freeze([
   {
     id: 'gmail', label: 'Gmail', group: 'google', kind: 'http',
     url: 'https://gmailmcp.googleapis.com/mcp/v1', auth: 'google-oauth',
-    deny: [],
+    // Diperiksa dari daftar tool server (Nov 2026): tidak ada tool kirim. Membuang ke sampah /
+    // menandai spam diblokir agar isi email jahat tidak bisa membuat Joko menyembunyikan email.
+    deny: ['trash_message', 'trash_thread', 'apply_sensitive_message_label', 'apply_sensitive_thread_label', 'mark_message_spam', 'mark_thread_spam'],
     summary: 'Cari & baca email, beri label, dan buat DRAF balasan.',
-    safety: 'Server Gmail resmi tidak punya tool kirim: Joko hanya membuat draf, Mas Andika yang menekan Kirim.'
+    safety: 'Tidak ada tool kirim: Joko hanya membuat draf, Mas Andika yang menekan Kirim. Membuang ke sampah & menandai spam diblokir.'
   },
   {
     id: 'drive', label: 'Google Drive', group: 'google', kind: 'http',
     url: 'https://drivemcp.googleapis.com/mcp/v1', auth: 'google-oauth',
-    deny: [],
+    deny: ['upload_file_revision'],
     summary: 'Cari, baca, buat, dan salin file di Drive.',
-    safety: 'Tidak ada tool untuk mengubah izin berbagi atau menghapus file.'
+    safety: 'Tidak ada tool hapus atau ubah izin berbagi. Menimpa isi file yang sudah ada diblokir.'
   },
   {
     id: 'calendar', label: 'Google Calendar', group: 'google', kind: 'http',

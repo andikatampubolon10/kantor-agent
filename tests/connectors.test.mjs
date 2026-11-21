@@ -94,6 +94,10 @@ test('normalizeConnectorSettings membuang id asing, nilai bukan true, dan yang b
   assert.deepEqual(normalizeConnectorSettings({ gmail: true, drive: 'ya', notebooklm: true, jahat: true, canva: true }), { gmail: true, canva: true });
   assert.deepEqual(normalizeConnectorSettings(null), {});
   assert.ok(CONNECTORS.every(c => Array.isArray(c.deny)));
+  const deny = Object.fromEntries(CONNECTORS.map(c => [c.id, c.deny]));
+  for (const t of ['trash_message', 'trash_thread', 'mark_thread_spam', 'apply_sensitive_thread_label']) assert.ok(deny.gmail.includes(t), t);
+  assert.ok(deny.drive.includes('upload_file_revision'));
+  assert.ok(deny.calendar.includes('delete_event'));
 });
 
 test('buildAgyCliArgs: aturan deny ikut di --settings dan divalidasi', () => {
