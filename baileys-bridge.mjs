@@ -36,6 +36,38 @@ function rememberJokoMessage(id) {
 }
 const processedIncomingMessageIds = new Set();
 
+// Berhenti rapi: jangan reconnect lagi, dan tunggu penyimpanan kredensial terakhir selesai.
+let shuttingDown = false;
+let pendingCredsSave = Promise.resolve();
+
+// Pemantau kesehatan sesi. Sesi enkripsi yang rusak tidak memutus koneksi: pesan tetap
+// datang tapi gagal didekripsi (stub CIPHERTEXT). Catat agar terlihat di log & /status.
+const HEALTH_WINDOW_MS = 10 * 60 * 1000;
+const HEALTH_WARN_COUNT = 5;
+const health = { lastInboundAt: 0, lastDecryptFailAt: 0, decryptFailures: [] };
+let lastHealthWarnAt = 0;
+function noteDecryptFailure() {
+  const now = Date.now();
+  health.lastDecryptFailAt = now;
+  health.decryptFailures = health.decryptFailures.filter(t => now - t < HEALTH_WINDOW_MS);
+  health.decryptFailures.push(now);
+  const recent = health.decryptFailures.length;
+  if (recent >= HEALTH_WARN_COUNT && health.lastInboundAt < now - HEALTH_WINDOW_MS && now - lastHealthWarnAt > HEALTH_WINDOW_MS) {
+    lastHealthWarnAt = now;
+    console.warn(`[Baileys] 🚨 ${recent} pesan gagal didekripsi dalam 10 menit tanpa satu pun pesan yang berhasil dibaca. Sesi enkripsi kemungkinan rusak; bila berlanjut, tautkan ulang lewat http://127.0.0.1:8795/tautkan.`);
+  }
+}
+function sessionLooksBroken() {
+  const now = Date.now();
+  const recent = health.decryptFailures.filter(t => now - t < HEALTH_WINDOW_MS).length;
+  return recent >= HEALTH_WARN_COUNT && health.lastInboundAt < now - HEALTH_WINDOW_MS;
+}
+
+/** Nomor HP (bukan LID) bila WhatsApp menyertakannya; LID tidak cocok dengan daftar nomor. */
+function preferPn(jid, alt) {
+  return (jid && jid.endsWith('@lid') && alt) ? alt : jid;
+}
+
 // Cache pesan in-memory untuk menangani retry receipt E2EE WhatsApp (Signal Protocol)
 // Menyelesaikan masalah "Menunggu pesan ini" pada perangkat mobile
 const messageCache = new Map();
@@ -133,8 +165,9 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
     const thisSock = makeWASocket({
       version,
       auth: state,
-      // Log internal Baileys senyap secara bawaan; set BAILEYS_LOG_LEVEL=warn untuk diagnosis.
-      logger: pino({ level: process.env.BAILEYS_LOG_LEVEL || 'silent' }),
+      // Hanya galat Baileys yang dicatat (mis. "failed to decrypt message"); set
+      // BAILEYS_LOG_LEVEL=warn/debug untuk diagnosis lebih rinci, atau silent untuk mematikan.
+      logger: pino({ level: process.env.BAILEYS_LOG_LEVEL || 'error' }),
       printQRInTerminal: isPairMethodQR,
       browser: browserIdentity,
       syncFullHistory: false,
@@ -144,20 +177,19 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
       // berlaku selama socket ini hidup; dengan bawaan, socket ditutup (408) sebelum
       // pengguna sempat memasukkan kode.
       qrTimeout: 120000,
-      // Handler getMessage untuk menyelesaikan "Menunggu pesan ini" saat WhatsApp meminta dekripsi retry
-      getMessage: async (key) => {
-        if (key?.id && messageCache.has(key.id)) {
-          return messageCache.get(key.id);
-        }
-        return proto?.Message?.fromObject({}) || undefined;
-      }
+      // Handler getMessage untuk menyelesaikan "Menunggu pesan ini" saat WhatsApp meminta dekripsi retry.
+      // Pesan yang tidak ada di cache dikembalikan undefined: mengirim ulang pesan kosong
+      // hanya mengganti "Menunggu pesan ini" dengan gelembung kosong.
+      getMessage: async (key) => (key?.id ? messageCache.get(key.id) : undefined)
     });
     sock = thisSock;
 
     // Penyimpanan kredensial bisa bentrok dengan penghapusan folder sesi saat logout (ENOENT);
     // tangkap supaya tidak menjadi unhandled rejection.
     sock.ev.on('creds.update', () => {
-      Promise.resolve(saveCreds()).catch(err => console.warn('[Baileys] Gagal menyimpan kredensial:', err.message));
+      pendingCredsSave = pendingCredsSave
+        .then(() => saveCreds())
+        .catch(err => console.warn('[Baileys] Gagal menyimpan kredensial:', err.message));
     });
     pairingInfo = { code: null, codeAt: 0, qr: null, qrAt: 0 };
 
@@ -229,6 +261,11 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
         const statusCode = lastDisconnect?.error?.output?.statusCode;
         const shouldReconnect = statusCode !== DisconnectReason?.loggedOut;
 
+        if (shuttingDown) {
+          console.log('[Baileys] Koneksi ditutup (Joko berhenti).');
+          return;
+        }
+
         console.log(`[Baileys] ⚠️ Koneksi terputus (Status: ${statusCode || 'Unknown'}). Reconnect: ${shouldReconnect}`);
 
         if (statusCode === DisconnectReason?.loggedOut) {
@@ -268,6 +305,7 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
           // messageStubType 2 = CIPHERTEXT: pesan gagal didekripsi. Baileys otomatis meminta
           // pengirim mengirim ulang (retry receipt); catat agar kegagalan tidak senyap.
           if (m.messageStubType === 2) {
+            noteDecryptFailure();
             const params = (m.messageStubParameters || []).join(' | ').slice(0, 120);
             console.warn(`[Baileys] 🔐 Pesan gagal didekripsi dari ${m.key?.remoteJid}${m.key?.participant ? ` (peserta ${m.key.participant})` : ''}, fromMe=${!!m.key?.fromMe}, id=${m.key?.id}${params ? ` — ${params}` : ''}. Menunggu kiriman ulang dari WhatsApp.`);
           }
@@ -281,6 +319,9 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
 
         // Cegah looping pesan: Jika pesan ini dikirim oleh bot Joko sendiri via sendMessage API, lewati
         if (m.key?.id && sentMessageIds.has(m.key.id)) continue;
+
+        // Pesan dari pihak lain berhasil didekripsi: sesi enkripsi sehat.
+        health.lastInboundAt = Date.now();
 
         // Cegah pemrosesan duplikat: Jika ID pesan ini sudah pernah diproses (misal event notify + append), lewati
         if (m.key?.id) {
@@ -302,10 +343,11 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
         }
 
         const rawRemoteJid = m.key.remoteJid;
-        if (!rawRemoteJid || rawRemoteJid === 'status@broadcast') continue;
+        // Status, siaran, dan saluran WhatsApp (Channel/@newsletter) bukan percakapan untuk Joko.
+        if (!rawRemoteJid || rawRemoteJid.endsWith('@broadcast') || rawRemoteJid.endsWith('@newsletter')) continue;
 
         // Tangani pemetaan LID WhatsApp jika remoteJid berformat @lid
-        const remoteJid = (rawRemoteJid.endsWith('@lid') && m.key.remoteJidAlt) ? m.key.remoteJidAlt : rawRemoteJid;
+        const remoteJid = preferPn(rawRemoteJid, m.key.remoteJidAlt);
 
         const isGroup = remoteJid.endsWith('@g.us');
         const myJid = sock.user?.id ? (sock.user.id.split(':')[0] + '@s.whatsapp.net') : '6282163850914@s.whatsapp.net';
@@ -314,7 +356,8 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
         // PENTING: Jika m.key.fromMe bernilai true, berarti pesan diketik langsung oleh Mas Andika dari HP pribadinya!
         let senderJid = remoteJid;
         if (isGroup) {
-          senderJid = m.key.participant || (m.key.fromMe ? myJid : remoteJid);
+          // Baileys 7: peserta grup bisa berupa LID; nomor HP-nya ada di participantAlt.
+          senderJid = preferPn(m.key.participant, m.key.participantAlt) || (m.key.fromMe ? myJid : remoteJid);
         } else if (m.key.fromMe) {
           senderJid = myJid;
         }
@@ -482,7 +525,25 @@ export function getBaileysStatus() {
   return {
     ready: !!(sock && isOpen && sock.user),
     user: sock?.user || null,
-    isConnecting
+    isConnecting,
+    sessionHealthy: !sessionLooksBroken(),
+    lastInboundAt: health.lastInboundAt || null,
+    lastDecryptFailAt: health.lastDecryptFailAt || null
   };
+}
+
+/**
+ * Tutup koneksi dengan rapi: hentikan reconnect, tunggu kredensial & kunci sesi
+ * terakhir tersimpan, lalu tutup WebSocket. Dipanggil sebelum proses Joko keluar.
+ */
+export async function closeBaileys(timeoutMs = 4000) {
+  shuttingDown = true;
+  const s = sock;
+  isOpen = false;
+  const work = (async () => {
+    await pendingCredsSave;
+    try { s?.end(undefined); } catch {}
+  })();
+  await Promise.race([work, new Promise(r => setTimeout(r, timeoutMs))]);
 }
 

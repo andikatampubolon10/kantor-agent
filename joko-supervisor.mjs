@@ -7,7 +7,8 @@
  *  - Restart otomatis bila Joko berhenti, dengan jeda bertahap 2 detik -> 60 detik
  *    (kembali 2 detik bila Joko sempat berjalan stabil >= 5 menit).
  *  - Log harian di logs/joko-YYYY-MM-DD.log (stderr diberi awalan [ERR]), disimpan 14 hari.
- *  - Berhenti rapi: hapus file logs/joko-supervisor.stop atau jalankan stop-wa-assistant.bat.
+ *  - Berhenti rapi: buat file logs/joko-supervisor.stop atau jalankan stop-wa-assistant.bat.
+ *    Supervisor meminta Joko (lewat IPC) menyimpan sesi WhatsApp & menutup koneksi dulu.
  *
  * Jalankan: node joko-supervisor.mjs   (otomatis lewat start-wa-assistant.vbs saat login)
  */
@@ -105,7 +106,8 @@ function startJoko() {
   child = spawn(process.execPath, [path.join(HERE, 'wa-assistant.mjs')], {
     cwd: HERE,
     env: process.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    // Kanal 'ipc' untuk perintah berhenti rapi (lihat shutdown()).
+    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     windowsHide: true
   });
   say(`Joko dijalankan (PID ${child.pid}).`);
@@ -129,7 +131,11 @@ function shutdown(reason) {
   const done = () => { releaseLock(); try { fs.unlinkSync(STOP_FILE); } catch {} logStream?.end(() => process.exit(0)); setTimeout(() => process.exit(0), 2000); };
   if (child) {
     child.once('exit', done);
-    child.kill();
+    // Minta Joko menyimpan sesi WhatsApp & menutup koneksi dulu. kill() di Windows langsung
+    // mematikan proses (tanpa sinyal yang bisa ditangkap), jadi hanya dipakai sebagai cadangan.
+    let asked = false;
+    try { asked = child.connected && child.send({ type: 'shutdown' }); } catch {}
+    if (!asked) child.kill();
     setTimeout(() => { try { child?.kill('SIGKILL'); } catch {} }, 8000);
   } else {
     done();

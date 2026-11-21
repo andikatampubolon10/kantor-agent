@@ -106,7 +106,8 @@ import {
   sendBaileysMessage,
   sendBaileysFile,
   getBaileysStatus,
-  getPairingInfo
+  getPairingInfo,
+  closeBaileys
 } from './baileys-bridge.mjs';
 import { renderLinkPage } from './link-page.mjs';
 
@@ -1724,6 +1725,9 @@ const server = http.createServer(async (req, res) => {
       name: 'Joko (Personal AI Assistant)',
       mode: jokoState.isAsleep ? 'SLEEP (Tidur)' : 'AWAKE (Aktif)',
       baileys: bStatus.ready ? 'CONNECTED (Multi-Device Direct)' : 'WAITING_PAIRING',
+      // false = banyak pesan gagal didekripsi tanpa ada yang berhasil: kemungkinan perlu tautkan ulang.
+      sessionHealthy: bStatus.sessionHealthy,
+      lastInboundAt: bStatus.lastInboundAt ? new Date(bStatus.lastInboundAt).toISOString() : null,
       port: PORT,
       timestamp: new Date().toISOString()
     }));
@@ -1888,6 +1892,18 @@ server.listen(PORT, '127.0.0.1', async () => {
 
 
 
-  process.on('SIGINT', () => process.exit());
-  process.on('SIGTERM', () => process.exit());
+  // Berhenti rapi: simpan kredensial/kunci sesi terakhir & tutup WebSocket sebelum keluar.
+  // Di Windows, supervisor mengirim perintah lewat kanal IPC (kill() di Windows langsung
+  // mematikan proses tanpa sinyal yang bisa ditangkap).
+  let exiting = false;
+  const gracefulExit = async (reason) => {
+    if (exiting) return;
+    exiting = true;
+    console.log(`[Joko] Berhenti rapi (${reason})...`);
+    try { await closeBaileys(); } catch {}
+    process.exit(0);
+  };
+  process.on('SIGINT', () => gracefulExit('SIGINT'));
+  process.on('SIGTERM', () => gracefulExit('SIGTERM'));
+  process.on('message', (msg) => { if (msg?.type === 'shutdown') gracefulExit('diminta supervisor'); });
 });
