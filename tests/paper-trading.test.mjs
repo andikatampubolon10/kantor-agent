@@ -138,6 +138,17 @@ test('prompt memuat portofolio, pasar, aturan & larangan memakai tool', () => {
   assert.match(p, /RSI14/);
 });
 
+test('prompt anti-FOMO: tanpa pembanding/hasil total, dengan larangan mengejar kenaikan', () => {
+  const s = fresh();
+  const p = buildDecisionPrompt({ state: s, market: mkt(), now: T0 });
+  assert.doesNotMatch(p, /beli-lalu-diam|benchmark|mengalahkan|Modal awal/i, 'AI tidak diberi angka ketertinggalan');
+  assert.match(p, /anti-FOMO/);
+  assert.match(p, /JANGAN membeli karena harga sudah naik/);
+  assert.match(p, /RSI14 > 70/);
+  assert.match(p, /BATAL/);
+  assert.match(p, /revenge trading/);
+});
+
 test('runner: mulai, analisis terjadwal, notifikasi, jeda/stop, data tersimpan', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-trade-'));
   const file = path.join(dir, 'trading.json');
