@@ -2061,7 +2061,7 @@ const BUILTIN_TOOLS = [
 
 const panelExtra = {
   // Paper trading
-  'GET trading': () => tradingStatusForPanel(),
+  'GET trading': async () => { await trading.refreshIfStale(20000); return tradingStatusForPanel(); },
   'POST trading/run': () => {
     trading.runDecision('panel').catch(err => console.warn(`[Trading] ⚠️ Analisis dari panel gagal: ${err.message}`));
     return { message: 'Analisis dimulai. Hasil muncul di sini dalam 1–2 menit.' };

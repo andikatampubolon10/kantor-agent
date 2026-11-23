@@ -256,3 +256,18 @@ test('runner: setelah restart harga langsung diambil walau belum jadwal catat', 
   assert.ok(r2.status().stats, 'statistik tersedia setelah tick pertama');
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).equity.length, marks, 'tidak menambah titik catat di luar jadwal');
 });
+
+test('runner: refreshIfStale mengambil harga live hanya bila sudah basi', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-trade-'));
+  let t = T0, calls = 0, btc = 1e9;
+  const market = { snapshot: async () => { calls++; return mkt(btc, 3e7, t); }, closes: async () => [] };
+  const r = createTradingRunner({ file: path.join(dir, 't.json'), market, decide: async () => ({ text: '{"aksi":[]}' }), now: () => t, log: { log() {}, warn() {} } });
+  await r.mark();
+  const n = calls;
+  t += 5000; await r.refreshIfStale(20000);
+  assert.equal(calls, n, 'masih segar');
+  t += 30000; btc = 1.1e9; await r.refreshIfStale(20000);
+  assert.equal(calls, n + 1);
+  assert.equal(r.status().market.btc_idr.bid, 1.1e9, 'statistik memakai harga terbaru');
+  assert.equal(r.status().state.equity.length, 1, 'tidak menambah titik kurva');
+});

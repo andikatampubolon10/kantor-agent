@@ -212,6 +212,12 @@ export function createTradingRunner({
     tick,
     mark,
     runDecision,
+    /** Harga untuk tampilan live (panel): ambil ulang bila lebih tua dari maxAgeMs. Tidak menambah titik catat. */
+    async refreshIfStale(maxAgeMs = 20000) {
+      const age = lastMarket ? now() - Math.min(...Object.values(lastMarket).map(m => m.t)) : Infinity;
+      if (age < maxAgeMs) return lastMarket;
+      try { return await refreshMarket(); } catch (err) { log.warn?.(`[Trading] Harga live gagal: ${err.message}`); return lastMarket; }
+    },
     status() {
       const m = lastMarket;
       const every = (state?.rules.decisionEveryHours || rules.decisionEveryHours) * 3600 * 1000;

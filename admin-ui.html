@@ -1690,7 +1690,7 @@ $('#jobForm').addEventListener('submit', async (ev) => {
 // ---------- Paper Trading ----------
 let tradeData = null;
 const PAIR = { btc_idr: 'BTC', eth_idr: 'ETH' };
-const rpx = (n) => n == null ? '—' : 'Rp' + Math.round(n).toLocaleString('id-ID');
+const rpx = (n) => n == null || !Number.isFinite(n) ? '—' : (Math.round(n) < 0 ? '−Rp' : 'Rp') + Math.abs(Math.round(n)).toLocaleString('id-ID');
 // Ringkas untuk harga besar: Rp1,1089 M (miliar) / Rp31,072 jt
 const rpc = (n) => n == null ? '—' : n >= 1e9 ? `Rp${(n / 1e9).toLocaleString('id-ID', { maximumFractionDigits: 4 })} M` : n >= 1e6 ? `Rp${(n / 1e6).toLocaleString('id-ID', { maximumFractionDigits: 3 })} jt` : rpx(n);
 const pctx = (x) => x == null ? '—' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(2)}%`;
@@ -1747,7 +1747,8 @@ async function loadTrading() {
     : d.paused ? '<span class="pill warn">Dijeda</span> Tidak ada analisis/transaksi baru.'
     : d.deciding ? '<span class="pill warn">Menganalisis…</span> Joko sedang membaca pasar.'
     : `<span class="pill ok">Berjalan</span> Analisis berikutnya ${d.nextDecisionAt ? fmtTime(d.nextDecisionAt) : '—'} WIB.`;
-  $('#tradeBanner').innerHTML = banner + (d.lastError ? ` <span class="small" style="color:var(--bad)">· Galat terakhir: ${esc(d.lastError.message)}</span>` : '');
+  const priceAt = d.market ? Math.min(...Object.values(d.market).map(m => m.t)) : null;
+  $('#tradeBanner').innerHTML = banner + (priceAt ? ` <span class="small muted">· harga live, diperbarui ${ago(priceAt, d.now)}</span>` : '') + (d.lastError ? ` <span class="small" style="color:var(--bad)">· Galat terakhir: ${esc(d.lastError.message)}</span>` : '');
   $('#tradePause').textContent = d.paused ? 'Lanjutkan' : 'Jeda';
   $('#tradeStop').textContent = d.halted ? 'Lanjutkan trading' : 'Stop darurat';
   $('#tradeStop').classList.toggle('danger', !d.halted);
