@@ -960,6 +960,17 @@ const agentQueue = createAgentQueue({
 const enqueueAgentTask = (task) => agentQueue.enqueue(task);
 const getAgentQueueStatus = () => agentQueue.status();
 
+// Jalur terpisah untuk tugas LATAR (analisis paper trading): tidak pernah membuat
+// perintah Mas Andika/tamu menunggu. Satu tugas latar sekaligus, berjalan paralel
+// dengan antrean utama (proses agy terpisah, tanpa sesi percakapan owner).
+const backgroundQueue = createAgentQueue({
+  maxQueue: 2,
+  maxPerChat: 1,
+  hardLimitMs: OWNER_TASK_TIMEOUT_MS + 2 * 60 * 1000,
+  makeTimeoutError: () => new AgentTimeoutError('Tugas latar melebihi batas waktu maksimum dan dilewati.', { stillRunning: true })
+});
+const enqueueBackgroundTask = (task) => backgroundQueue.enqueue(task);
+
 // Eksekusi prompt sekali jalan untuk Cron Job Antigravity (lewat antrean, tanpa sesi owner)
 async function executeCronWithAntigravity(taskPrompt) {
   console.log(`[Cron Agent] Mengantrekan eksekusi tugas terjadwal...`);
@@ -1763,6 +1774,7 @@ const runJokoTool = createToolRunner({
     'Kondisi Joko': getJokoState().isAsleep ? 'Tidur' : 'Aktif',
     'WhatsApp': getBaileysStatus().ready ? 'Terhubung' : 'Menyambungkan ulang',
     'Antrean agen': getAgentQueueStatus(),
+    'Tugas latar (trading)': backgroundQueue.status(),
     'Model AI': `tugas berat: ${pickModel('laporan').model}, obrolan: ${pickModel('').model}`,
     'Radar Transjakarta': getTrackerStatus(),
     'Jumlah memori': memoryStore.list().length
@@ -1952,7 +1964,7 @@ const trading = createTradingRunner({
   file: path.join(process.cwd(), '.joko-trading.json'),
   market: createIndodaxMarket(),
   decide: async (prompt) => {
-    const queued = enqueueAgentTask({
+    const queued = enqueueBackgroundTask({
       label: 'trading',
       chatId: 'trading',
       run: () => askAgyCli(prompt, { persona: TRADING_PERSONA, routeText: 'analisis trading', label: 'trading' })
@@ -2006,7 +2018,7 @@ function tradingStatusForPanel() {
     deciding: s.deciding,
     lastError: s.lastError,
     nextDecisionAt: s.nextDecisionAt,
-    positions: Object.entries(st.positions).map(([pair, p]) => ({ pair, qty: p.qty, cost: p.cost, value: s.market?.[pair] ? p.qty * s.market[pair].bid : null })),
+    positions: Object.entries(st.positions).map(([pair, p]) => ({ pair, qty: p.qty, cost: p.cost, stop: p.stop || null, target: p.target || null, value: s.market?.[pair] ? p.qty * s.market[pair].bid : null })),
     trades: st.trades.slice(-60).reverse(),
     decisions: st.decisions.slice(-30).reverse(),
     equity: st.equity.filter((_, i) => i % step === 0 || i === st.equity.length - 1),

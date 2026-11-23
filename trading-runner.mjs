@@ -9,8 +9,9 @@
 import { readJsonFile, writeJsonAtomic } from './json-store.mjs';
 import {
   createState, markToMarket, computeStats, buildDecisionPrompt, parseDecision, applyDecision,
-  recordFailedDecision, positionValue, PAIR_LABEL, wibDay, DEFAULT_RULES
+  recordFailedDecision, positionValue, PAIR_LABEL, wibDay, DEFAULT_RULES, checkExits, marketSnapshot
 } from './paper-trading.mjs';
+import fs from 'node:fs';
 
 const UA = 'kantor-agent-paper-trading/1.0';
 const rp = (n) => `Rp${Math.round(n).toLocaleString('id-ID')}`;
@@ -52,9 +53,12 @@ export function createIndodaxMarket({ fetchImpl = globalThis.fetch, timeoutMs = 
 
 export function formatTradeNotice(trade) {
   const label = PAIR_LABEL[trade.pair] || trade.pair;
-  const head = trade.side === 'beli' ? `🟢 BELI ${label} ${rp(trade.valueIdr)}` : `🔴 JUAL ${label} ${rp(trade.valueIdr)}`;
+  const head = trade.auto === 'stop' ? `🛑 STOP-LOSS ${label} ${rp(trade.valueIdr)}`
+    : trade.auto === 'target' ? `🎯 TAKE-PROFIT ${label} ${rp(trade.valueIdr)}`
+    : trade.side === 'beli' ? `🟢 BELI ${label} ${rp(trade.valueIdr)}` : `🔴 JUAL ${label} ${rp(trade.valueIdr)}`;
   const pnl = trade.realizedPnl != null ? ` · laba/rugi ${rp(trade.realizedPnl)}` : '';
-  return `${head} @ ${rp(trade.price)}${pnl}\n   _${trade.reason || 'tanpa alasan'}_`;
+  const lv = trade.stop ? `\n   batal ${rp(trade.stop)} · target ${rp(trade.target)}` : '';
+  return `${head} @ ${rp(trade.price)}${pnl}${lv}\n   _${trade.reason || 'tanpa alasan'}_`;
 }
 
 export function formatReport(state, market, { title = '📊 *Laporan Paper Trading Joko*' } = {}) {
@@ -161,14 +165,16 @@ export function createTradingRunner({
         log.warn?.(`[Trading] Harga terbaru gagal (${err.message}); memakai harga saat analisis.`);
         fresh = m;
       }
-      const { record, results } = applyDecision(state, fresh, decision, { now: now(), model: out.model, trigger });
+      const { record, results } = applyDecision(state, fresh, decision, { now: now(), model: out.model, trigger, snapshot: marketSnapshot(m, closes) });
       state.meta.lastDecisionAt = now();
       save();
-      const done = results.filter(r => r.ok);
+      const done = results.filter(r => r.ok && r.trade);
+      const levels = results.filter(r => r.ok && r.levelChange);
       const rejected = results.filter(r => !r.ok);
-      log.log?.(`[Trading] 🤖 Keputusan ${record.id}: ${done.length} dieksekusi, ${rejected.length} ditolak, ${results.length ? '' : 'tahan'}`.trim());
-      if (done.length || rejected.length) {
+      log.log?.(`[Trading] 🤖 Keputusan ${record.id}: ${done.length} dieksekusi, ${levels.length} ubah level, ${rejected.length} ditolak, ${results.length ? '' : 'tahan'}`.trim());
+      if (done.length || levels.length || rejected.length) {
         const parts = ['🤖 *Paper trading — keputusan Joko*', ...done.map(r => formatTradeNotice(r.trade))];
+        for (const r of levels) parts.push(`🔧 UBAH LEVEL ${PAIR_LABEL[r.levelChange.pair] || r.levelChange.pair}: batal ${rp(r.levelChange.stop)} · target ${rp(r.levelChange.target)}\n   _${r.action.reason || ''}_`);
         for (const r of rejected) parts.push(`⚪ Ditolak sistem (${r.action.side} ${PAIR_LABEL[r.action.pair] || r.action.pair}): ${r.error}`);
         parts.push('', `Ekuitas: ${rp(computeStats(state, fresh).equity)}`);
         await safeNotify(parts.join('\n'));
@@ -183,11 +189,29 @@ export function createTradingRunner({
     }
   }
 
+  /** Stop-loss / take-profit: dicek tiap tick (±1 menit) selama ada posisi berlevel. */
+  async function enforceExits() {
+    if (!state || deciding) return []; // saat AI berpikir, dicek lagi setelah keputusan diterapkan
+    const guarded = Object.values(state.positions).some(p => p.stop || p.target);
+    if (!guarded) return [];
+    const age = lastMarket ? now() - Math.min(...Object.values(lastMarket).map(x => x.t)) : Infinity;
+    if (age > 50 * 1000) {
+      try { await refreshMarket(); } catch (err) { log.warn?.(`[Trading] Cek stop/target dilewati: ${err.message}`); return []; }
+    }
+    const exits = checkExits(state, lastMarket, now());
+    if (!exits.length) return [];
+    save();
+    for (const t of exits) log.log?.(`[Trading] ${t.auto === 'stop' ? '🛑 Stop-loss' : '🎯 Take-profit'} ${t.pair}: ${t.realizedPnl}`);
+    await safeNotify(['⚙️ *Paper trading — jual otomatis*', ...exits.map(formatTradeNotice), '', `Ekuitas: ${rp(computeStats(state, lastMarket).equity)}`].join('\n'));
+    return exits;
+  }
+
   async function tick() {
     try {
       const t = now();
       if (!state || !state.meta?.lastMarkAt || t - state.meta.lastMarkAt >= markEveryMs) await mark();
       else if (!lastMarket) await refreshMarket(); // setelah restart: harga untuk panel tanpa menunggu jadwal catat
+      await enforceExits();
       const every = state.rules.decisionEveryHours * 3600 * 1000;
       const last = state.meta.lastDecisionAt || 0;
       const attempt = state.meta.lastAttemptAt || 0;
@@ -252,6 +276,11 @@ export function createTradingRunner({
       const cash = Number(startingCash) || rules.startingCash;
       if (cash < 1_000_000 || cash > 1_000_000_000) throw new Error('Modal simulasi harus Rp1 juta – Rp1 miliar.');
       const m = await refreshMarket();
+      // Simpan data lama sebagai arsip (tidak dihapus) sebelum mulai baru.
+      if (state && fs.existsSync(file)) {
+        const stamp = new Date(now() + 7 * 3600 * 1000).toISOString().slice(0, 16).replace(/[-:T]/g, '');
+        fs.copyFileSync(file, file.replace(/\.json$/, '') + `.arsip-${stamp}.json`);
+      }
       state = createState({ rules: { ...rules, startingCash: cash }, now: now(), market: m });
       state.meta = { lastMarkAt: now() };
       markToMarket(state, m, now());

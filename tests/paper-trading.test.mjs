@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   createState, executeOrder, validateOrder, markToMarket, computeStats, equityOf, benchmarkEquity,
-  parseDecision, applyDecision, buildDecisionPrompt, rsi, sma, indicators, maxDrawdown, TradeRuleError, DecisionParseError
+  parseDecision, applyDecision, buildDecisionPrompt, rsi, sma, indicators, maxDrawdown, TradeRuleError, DecisionParseError,
+  checkExits, evaluateDecisions, evaluationSummary, marketSnapshot
 } from '../paper-trading.mjs';
 import { createTradingRunner, formatReport } from '../trading-runner.mjs';
 
@@ -14,11 +15,12 @@ const mkt = (btc = 1_000_000_000, eth = 30_000_000, t = T0) => ({
   btc_idr: { bid: btc, ask: btc + btc / 1000, last: btc, high: btc, low: btc, t },
   eth_idr: { bid: eth, ask: eth + eth / 1000, last: eth, high: eth, low: eth, t }
 });
+const LV = { btc_idr: { stop: 950_000_000, target: 1_100_000_000 }, eth_idr: { stop: 28_500_000, target: 33_000_000 } };
 const fresh = () => createState({ now: T0, market: mkt() });
 
 test('beli di harga ask dengan biaya; jual di bid; laba/rugi terealisasi benar', () => {
   const s = fresh();
-  const buy = executeOrder(s, mkt(), { pair: 'btc_idr', side: 'beli', amountIdr: 1_000_000 }, { now: T0, reason: 'uji' });
+  const buy = executeOrder(s, mkt(), { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 1_000_000 }, { now: T0, reason: 'uji' });
   assert.equal(buy.price, 1_001_000_000);
   assert.equal(s.cash, 9_000_000);
   assert.ok(Math.abs(s.positions.btc_idr.qty - (1_000_000 * 0.997) / 1_001_000_000) < 1e-15);
@@ -38,36 +40,36 @@ test('aturan risiko ditegakkan kode', () => {
   const m = mkt();
   const bad = (order, re) => assert.throws(() => validateOrder(s, m, order, T0), (e) => e instanceof TradeRuleError && re.test(e.message));
   bad({ pair: 'doge_idr', side: 'beli', amountIdr: 100_000 }, /tidak diizinkan/);
-  bad({ pair: 'btc_idr', side: 'beli', amountIdr: 2_500_000 }, /20% ekuitas/);
-  bad({ pair: 'btc_idr', side: 'beli', amountIdr: 10_000 }, /minimal/);
-  bad({ pair: 'btc_idr', side: 'beli', amountIdr: -5 }, /tidak valid/);
+  bad({ pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 2_500_000 }, /20% ekuitas/);
+  bad({ pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 10_000 }, /minimal/);
+  bad({ pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: -5 }, /tidak valid/);
   bad({ pair: 'btc_idr', side: 'jual', portion: 1 }, /tidak memiliki/);
   bad({ pair: 'btc_idr', side: 'short', amountIdr: 100_000 }, /beli.*jual/);
-  assert.throws(() => validateOrder(s, mkt(1e9, 3e7, T0 - 10 * 60 * 1000), { pair: 'btc_idr', side: 'beli', amountIdr: 100_000 }, T0), /basi/);
+  assert.throws(() => validateOrder(s, mkt(1e9, 3e7, T0 - 10 * 60 * 1000), { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 100_000 }, T0), /basi/);
   // Batas posisi 50%: 2 order 20% boleh, order ketiga melewati 50%
-  executeOrder(s, m, { pair: 'btc_idr', side: 'beli', amountIdr: 1_900_000 }, { now: T0 });
-  executeOrder(s, m, { pair: 'btc_idr', side: 'beli', amountIdr: 1_900_000 }, { now: T0 });
-  bad({ pair: 'btc_idr', side: 'beli', amountIdr: 1_500_000 }, /50% ekuitas/);
+  executeOrder(s, m, { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 1_900_000 }, { now: T0 });
+  executeOrder(s, m, { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 1_900_000 }, { now: T0 });
+  bad({ pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 1_500_000 }, /50% ekuitas/);
   s.paused = true;
-  bad({ pair: 'eth_idr', side: 'beli', amountIdr: 100_000 }, /dijeda/);
+  bad({ pair: 'eth_idr', side: 'beli', ...LV.eth_idr, amountIdr: 100_000 }, /dijeda/);
 });
 
 test('batas transaksi harian & kas tidak cukup', () => {
   const s = fresh();
   s.rules = { ...s.rules, maxTradesPerDay: 2, maxOrderPct: 1, maxPositionPct: 1 };
   const m = mkt();
-  executeOrder(s, m, { pair: 'eth_idr', side: 'beli', amountIdr: 100_000 }, { now: T0 });
-  executeOrder(s, m, { pair: 'eth_idr', side: 'beli', amountIdr: 100_000 }, { now: T0 });
-  assert.throws(() => validateOrder(s, m, { pair: 'eth_idr', side: 'beli', amountIdr: 100_000 }, T0), /2 transaksi per hari/);
+  executeOrder(s, m, { pair: 'eth_idr', side: 'beli', ...LV.eth_idr, amountIdr: 100_000 }, { now: T0 });
+  executeOrder(s, m, { pair: 'eth_idr', side: 'beli', ...LV.eth_idr, amountIdr: 100_000 }, { now: T0 });
+  assert.throws(() => validateOrder(s, m, { pair: 'eth_idr', side: 'beli', ...LV.eth_idr, amountIdr: 100_000 }, T0), /2 transaksi per hari/);
   const s2 = fresh();
   s2.rules = { ...s2.rules, maxOrderPct: 1, maxPositionPct: 1 };
-  assert.throws(() => validateOrder(s2, m, { pair: 'eth_idr', side: 'beli', amountIdr: 10_000_001 }, T0), /kas tidak cukup/);
+  assert.throws(() => validateOrder(s2, m, { pair: 'eth_idr', side: 'beli', ...LV.eth_idr, amountIdr: 10_000_001 }, T0), /kas tidak cukup/);
 });
 
 test('batas rugi harian menghentikan trading lalu lepas otomatis besok', () => {
   const s = fresh();
-  executeOrder(s, mkt(), { pair: 'btc_idr', side: 'beli', amountIdr: 1_900_000 }, { now: T0 });
-  executeOrder(s, mkt(), { pair: 'eth_idr', side: 'beli', amountIdr: 1_900_000 }, { now: T0 });
+  executeOrder(s, mkt(), { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 1_900_000 }, { now: T0 });
+  executeOrder(s, mkt(), { pair: 'eth_idr', side: 'beli', ...LV.eth_idr, amountIdr: 1_900_000 }, { now: T0 });
   assert.equal(markToMarket(s, mkt(), T0 + 1000), null);
   const crash = mkt(700_000_000, 21_000_000, T0 + 2000); // -30% -> rugi ~1,2 jt (>3%)
   const h = markToMarket(s, crash, T0 + 2000);
@@ -83,7 +85,7 @@ test('statistik: ekuitas, benchmark beli-lalu-diam, drawdown, win rate', () => {
   const s = fresh();
   assert.equal(equityOf(s, mkt()), 10_000_000);
   assert.equal(benchmarkEquity(s, mkt(1_100_000_000, 33_000_000)), 11_000_000);
-  executeOrder(s, mkt(), { pair: 'btc_idr', side: 'beli', amountIdr: 1_000_000 }, { now: T0 });
+  executeOrder(s, mkt(), { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 1_000_000 }, { now: T0 });
   executeOrder(s, mkt(1_200_000_000), { pair: 'btc_idr', side: 'jual', portion: 1 }, { now: T0 });
   const st = computeStats(s, mkt());
   assert.equal(st.closedTrades, 1);
@@ -105,9 +107,9 @@ test('indikator: SMA & RSI', () => {
 });
 
 test('parseDecision: blok resmi, JSON longgar, dan format salah', () => {
-  const d = parseDecision('Analisa...\n```keputusan-trading\n{"analisis":"tren naik","aksi":[{"pair":"BTC_IDR","sisi":"beli","jumlah_idr":500000,"alasan":"SMA12>SMA48"},{"pair":"eth_idr","sisi":"jual","porsi":0.5}]}\n```');
+  const d = parseDecision('Analisa...\n```keputusan-trading\n{"analisis":"tren naik","aksi":[{"pair":"BTC_IDR","sisi":"beli","jumlah_idr":500000,"batal":950000000,"target":1100000000,"alasan":"SMA12>SMA48"},{"pair":"eth_idr","sisi":"jual","porsi":0.5}]}\n```');
   assert.equal(d.analysis, 'tren naik');
-  assert.deepEqual(d.actions[0], { pair: 'btc_idr', side: 'beli', amountIdr: 500000, portion: undefined, reason: 'SMA12>SMA48' });
+  assert.deepEqual(d.actions[0], { pair: 'btc_idr', side: 'beli', amountIdr: 500000, portion: undefined, stop: 950000000, target: 1100000000, reason: 'SMA12>SMA48' });
   assert.equal(d.actions[1].portion, 0.5);
   assert.deepEqual(parseDecision('{"analisis":"tahan","aksi":[]}').actions, []);
   assert.throws(() => parseDecision('tidak ada json'), DecisionParseError);
@@ -119,8 +121,8 @@ test('parseDecision: blok resmi, JSON longgar, dan format salah', () => {
 test('applyDecision: aksi valid dieksekusi, pelanggaran ditolak dengan alasan', () => {
   const s = fresh();
   const { record, results } = applyDecision(s, mkt(), { analysis: 'a', actions: [
-    { pair: 'btc_idr', side: 'beli', amountIdr: 1_000_000, reason: 'ok' },
-    { pair: 'btc_idr', side: 'beli', amountIdr: 9_000_000, reason: 'kebesaran' },
+    { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 1_000_000, reason: 'ok' },
+    { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 9_000_000, reason: 'kebesaran' },
     { pair: 'xrp_idr', side: 'beli', amountIdr: 100_000, reason: 'asing' }
   ] }, { now: T0, model: 'm' });
   assert.deepEqual(results.map(r => r.ok), [true, false, false]);
@@ -156,7 +158,7 @@ test('runner: mulai, analisis terjadwal, notifikasi, jeda/stop, data tersimpan',
   const notes = [];
   const prompts = [];
   const market = { snapshot: async () => mkt(1e9, 3e7, t), closes: async () => Array.from({ length: 72 }, (_, i) => 1e9 + i) };
-  const decide = async (prompt) => { prompts.push(prompt); return { text: '```keputusan-trading\n{"analisis":"uji","aksi":[{"pair":"btc_idr","sisi":"beli","jumlah_idr":1000000,"alasan":"uji beli"}]}\n```', model: 'model-uji' }; };
+  const decide = async (prompt) => { prompts.push(prompt); return { text: '```keputusan-trading\n{"analisis":"uji","aksi":[{"pair":"btc_idr","sisi":"beli","jumlah_idr":1000000,"batal":950000000,"target":1100000000,"alasan":"uji beli"}]}\n```', model: 'model-uji' }; };
   const r = createTradingRunner({ file, market, decide, notify: async (x) => notes.push(x), now: () => t, log: { log() {}, warn() {} } });
   await r.tick();
   assert.equal(prompts.length, 1, 'analisis pertama langsung jalan');
@@ -216,7 +218,7 @@ test('runner: gagal -> diulang 15 menit kemudian; harga gagal setelah AI -> paka
     calls++;
     if (calls === 1) throw new Error('agen sibuk');
     failSnapshotAfterDecide = true;
-    return { text: '{"analisis":"x","aksi":[{"pair":"eth_idr","sisi":"beli","jumlah_idr":200000,"alasan":"uji"}]}', model: 'm' };
+    return { text: '{"analisis":"x","aksi":[{"pair":"eth_idr","sisi":"beli","jumlah_idr":200000,"batal":28500000,"target":33000000,"alasan":"uji"}]}', model: 'm' };
   };
   const r = createTradingRunner({ file: path.join(dir, 't.json'), market, decide, now: () => t, log: { log() {}, warn() {} } });
   await r.tick();
@@ -270,4 +272,99 @@ test('runner: refreshIfStale mengambil harga live hanya bila sudah basi', async 
   assert.equal(calls, n + 1);
   assert.equal(r.status().market.btc_idr.bid, 1.1e9, 'statistik memakai harga terbaru');
   assert.equal(r.status().state.equity.length, 1, 'tidak menambah titik kurva');
+});
+
+test('beli wajib level batal & target yang masuk akal', () => {
+  const s = fresh();
+  const m = mkt();
+  const bad = (extra, re) => assert.throws(() => validateOrder(s, m, { pair: 'btc_idr', side: 'beli', amountIdr: 500_000, ...extra }, T0), (e) => e instanceof TradeRuleError && re.test(e.message));
+  bad({}, /level batal .*wajib/);
+  bad({ stop: 950_000_000 }, /target .*wajib/);
+  bad({ stop: 999_000_000, target: 1.1e9 }, /terlalu dekat/);
+  bad({ stop: 800_000_000, target: 1.1e9 }, /terlalu jauh/);
+  bad({ stop: 950_000_000, target: 1_005_000_000 }, /target .*terlalu dekat/);
+  bad({ stop: 950_000_000, target: 2e9 }, /tidak realistis/);
+  const ok = validateOrder(s, m, { pair: 'btc_idr', side: 'beli', amountIdr: 500_000, ...LV.btc_idr }, T0);
+  assert.equal(ok.stop, 950_000_000);
+});
+
+test('jual otomatis: stop-loss & take-profit, tetap jalan saat dihentikan, tidak makan kuota harian', () => {
+  const s = fresh();
+  s.rules = { ...s.rules, maxTradesPerDay: 2 };
+  executeOrder(s, mkt(), { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 1_000_000 }, { now: T0 });
+  executeOrder(s, mkt(), { pair: 'eth_idr', side: 'beli', ...LV.eth_idr, amountIdr: 1_000_000 }, { now: T0 });
+  assert.equal(s.positions.btc_idr.stop, 950_000_000);
+  assert.deepEqual(checkExits(s, mkt(), T0 + 1000), [], 'harga di antara level: tidak ada aksi');
+  s.halted = { kind: 'manual', reason: 'uji' };
+  const t1 = T0 + 60_000;
+  const exits = checkExits(s, mkt(940_000_000, 34_000_000, t1), t1);
+  assert.deepEqual(exits.map(t => [t.pair, t.auto]).sort(), [['btc_idr', 'stop'], ['eth_idr', 'target']]);
+  assert.ok(exits.find(t => t.auto === 'stop').realizedPnl < 0);
+  assert.ok(exits.find(t => t.auto === 'target').realizedPnl > 0);
+  assert.deepEqual(s.positions, {});
+  assert.match(exits[0].reason, /otomatis/);
+  s.halted = null;
+  // 2 beli + 2 jual otomatis hari ini: batas 2 transaksi hanya menghitung yang bukan otomatis
+  assert.throws(() => validateOrder(s, mkt(1e9, 3e7, t1), { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 100_000 }, t1), /2 transaksi per hari/);
+  // harga basi -> tidak dieksekusi
+  const s2 = fresh();
+  executeOrder(s2, mkt(), { pair: 'btc_idr', side: 'beli', ...LV.btc_idr, amountIdr: 1_000_000 }, { now: T0 });
+  assert.deepEqual(checkExits(s2, mkt(900_000_000, 3e7, T0), T0 + 10 * 60_000), []);
+});
+
+test('aksi "ubah" menggeser level posisi; posisi tanpa level tidak dijual otomatis', () => {
+  const s = fresh();
+  executeOrder(s, mkt(), { pair: 'eth_idr', side: 'beli', ...LV.eth_idr, amountIdr: 1_000_000 }, { now: T0 });
+  const m2 = mkt(1e9, 32_000_000);
+  const { results } = applyDecision(s, m2, { analysis: 'kunci laba', actions: [{ pair: 'eth_idr', side: 'ubah', stop: 31_000_000, target: 34_000_000, reason: 'naikkan batal' }] }, { now: T0 });
+  assert.equal(results[0].ok, true);
+  assert.equal(s.positions.eth_idr.stop, 31_000_000);
+  assert.equal(s.trades.length, 1, 'ubah level bukan transaksi');
+  assert.throws(() => validateOrder(s, m2, { pair: 'eth_idr', side: 'ubah', stop: 32_500_000, target: 34_000_000 }, T0), /terlalu dekat|di atas/);
+  assert.throws(() => validateOrder(s, m2, { pair: 'btc_idr', side: 'ubah', stop: 9e8, target: 1.1e9 }, T0), /tidak memiliki/);
+  delete s.positions.eth_idr.stop; delete s.positions.eth_idr.target;
+  assert.deepEqual(checkExits(s, mkt(1e9, 1e7), T0), []);
+});
+
+test('evaluasi diri: hasil 4 & 24 jam setelah keputusan, ditandai tidak terukur bila Joko mati', () => {
+  const s = fresh();
+  const closes = { btc_idr: Array.from({ length: 50 }, () => 1e9), eth_idr: Array.from({ length: 50 }, () => 3e7) };
+  const snap = marketSnapshot(mkt(), closes);
+  assert.equal(snap.btc_idr.last, 1e9);
+  assert.equal(snap.btc_idr.vsSma12, 0);
+  applyDecision(s, mkt(), { analysis: 'beli', actions: [{ pair: 'btc_idr', side: 'beli', amountIdr: 1_000_000, ...LV.btc_idr, reason: 'x' }] }, { now: T0, snapshot: snap });
+  applyDecision(s, mkt(), { analysis: 'tahan', actions: [] }, { now: T0 + 1000, snapshot: snap });
+  const H = 3600_000;
+  for (let t = T0; t <= T0 + 5 * H; t += 15 * 60_000) markToMarket(s, mkt(1e9 * (1 + (t - T0) / H / 100), 3e7, t), t);
+  assert.ok(Math.abs(s.decisions[0].eval.h4.btc_idr - 0.04) < 1e-6, 'BTC +4% setelah 4 jam');
+  assert.equal(s.decisions[0].eval.h4.eth_idr, 0);
+  assert.equal('h24' in s.decisions[0].eval, false, 'belum 24 jam');
+  // Joko mati sampai jam ke-30: 24 jam tidak terukur
+  markToMarket(s, mkt(), T0 + 30 * H);
+  evaluateDecisions(s, T0 + 30 * H);
+  assert.equal(s.decisions[0].eval.h24, null);
+  const sum = evaluationSummary(s);
+  assert.equal(sum.lines.length, 2);
+  assert.match(sum.lines[0], /BELI BTC .*4j: BTC \+4\.00%.*24j: tidak terukur/);
+  assert.match(sum.lines[1], /TAHAN/);
+  assert.match(sum.summary.join(' '), /Beli: 1x, tepat arah 100%/);
+  const p = buildDecisionPrompt({ state: s, market: mkt(), now: T0 + 30 * H });
+  assert.match(p, /Evaluasi keputusanmu sebelumnya/);
+  assert.match(p, /KALIBRASI/);
+  assert.match(p, /level batal/);
+});
+
+test('runner: stop-loss dijalankan di antara analisis & dinotifikasi', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-trade-'));
+  let t = T0, btc = 1e9;
+  const notes = [];
+  const market = { snapshot: async () => mkt(btc, 3e7, t), closes: async () => [] };
+  const decide = async () => ({ text: '{"analisis":"x","aksi":[{"pair":"btc_idr","sisi":"beli","jumlah_idr":1000000,"batal":950000000,"target":1100000000,"alasan":"uji"}]}', model: 'm' });
+  const r = createTradingRunner({ file: path.join(dir, 't.json'), market, decide, notify: async (x) => notes.push(x), now: () => t, log: { log() {}, warn() {} } });
+  await r.tick();
+  assert.equal(r.status().state.positions.btc_idr.stop, 950_000_000);
+  t += 60_000; btc = 940_000_000; await r.tick();
+  assert.deepEqual(r.status().state.positions, {});
+  assert.match(notes.at(-1), /jual otomatis[\s\S]*STOP-LOSS BTC/);
+  assert.equal(r.status().state.decisions[0].snapshot.btc_idr.last, 1e9, 'snapshot keputusan tersimpan');
 });

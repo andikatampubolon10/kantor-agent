@@ -1735,6 +1735,17 @@ function lineChart(el, series) {
   }
   el.innerHTML = svg + '</svg>';
 }
+// Hasil harga 4 & 24 jam setelah keputusan (evaluasi diri yang juga dibaca Joko).
+function evalHtml(x) {
+  if (!x.ok || !x.snapshot) return '';
+  const ev = x.eval || {};
+  const part = (k, label) => {
+    if (!(k in ev)) return `<span class="chip">${label}: menunggu</span>`;
+    if (ev[k] == null) return `<span class="chip" title="Joko mati saat waktu penilaian">${label}: tidak terukur</span>`;
+    return Object.entries(ev[k]).map(([p, v]) => `<span class="chip" style="${toneOf(v)}">${label} ${esc(PAIR[p] || p)} ${pctx(v)}</span>`).join('');
+  };
+  return `<div class="chips" style="margin-top:6px">${part('h4', '4j')}${part('h24', '24j')}</div>`;
+}
 async function loadTrading() {
   try { tradeData = await api('trading'); } catch (e) { if (e.status !== 401) $('#tradeKpi').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
   const d = tradeData;
@@ -1778,7 +1789,8 @@ async function loadTrading() {
 
   const posRows = d.positions.map(p => {
     const g = p.value != null ? (p.value - p.cost) / p.cost : null;
-    return `<tr><td><b>${esc(PAIR[p.pair] || p.pair)}</b><div class="small muted mono">${p.qty.toPrecision(6)}</div></td><td>${rpx(p.cost)}</td><td>${rpx(p.value)}</td><td style="${toneOf(g)}">${pctx(g)}</td></tr>`;
+    const lv = p.stop ? `<div class="small"><span style="color:var(--bad)">batal ${rpc(p.stop)}</span> · <span style="color:var(--ok)">target ${rpc(p.target)}</span></div>` : '<div class="small" style="color:var(--warn)">tanpa level batal/target</div>';
+    return `<tr><td><b>${esc(PAIR[p.pair] || p.pair)}</b><div class="small muted mono">${p.qty.toPrecision(6)}</div>${lv}</td><td>${rpx(p.cost)}</td><td>${rpx(p.value)}</td><td style="${toneOf(g)}">${pctx(g)}</td></tr>`;
   }).join('');
   $('#tradePos').innerHTML = `<table><thead><tr><th>Aset</th><th>Modal</th><th>Nilai</th><th>Hasil</th></tr></thead><tbody>
     <tr><td><b>Kas</b></td><td colspan="2">${rpx(s.cash)}</td><td></td></tr>${posRows}</tbody></table>`;
@@ -1789,18 +1801,20 @@ async function loadTrading() {
   $('#tradeDecisions').innerHTML = d.decisions.length ? d.decisions.map(x => `<div class="li" style="cursor:default;display:block">
       <div class="row" style="justify-content:space-between"><b>${fmtTime(x.t)}</b><span class="small muted">${esc(x.trigger)}${x.model ? ' · ' + esc(shortModel(x.model)) : ''}</span></div>
       ${x.ok ? `<div class="small" style="margin:6px 0">${esc(x.analysis || '—')}</div>` : `<div class="small" style="color:var(--bad);margin:6px 0">Gagal: ${esc(x.error)}</div>`}
-      ${x.ok ? (x.actions.length ? `<div class="chips">${x.actions.map(a => `<span class="chip ${a.ok ? 'req' : ''}" title="${esc(a.reason || '')}${a.error ? ' — ditolak: ' + esc(a.error) : ''}" ${a.ok ? '' : 'style="text-decoration:line-through"'}>${esc(a.side)} ${esc(PAIR[a.pair] || a.pair)} ${a.side === 'beli' ? rpx(a.amountIdr) : Math.round((a.portion || 0) * 100) + '%'}</span>`).join('')}</div>` : '<span class="pill">Tahan</span>') : ''}
+      ${x.ok ? (x.actions.length ? `<div class="chips">${x.actions.map(a => `<span class="chip ${a.ok ? 'req' : ''}" title="${esc(a.reason || '')}${a.error ? ' — ditolak: ' + esc(a.error) : ''}" ${a.ok ? '' : 'style="text-decoration:line-through"'}>${esc(a.side)} ${esc(PAIR[a.pair] || a.pair)} ${a.side === 'beli' ? rpx(a.amountIdr) : a.side === 'ubah' ? `batal ${rpc(a.stop)}` : Math.round((a.portion || 0) * 100) + '%'}</span>`).join('')}</div>` : '<span class="pill">Tahan</span>') : ''}
+      ${evalHtml(x)}
     </div>`).join('') : '<div class="empty">Belum ada keputusan.</div>';
 
   $('#tradeTrades').innerHTML = d.trades.length ? `<table><thead><tr><th>Waktu</th><th>Transaksi</th><th>Harga</th><th>Laba/rugi</th></tr></thead><tbody>${
-    d.trades.map(t => `<tr><td class="small">${fmtTime(t.t)}</td><td>${t.side === 'beli' ? '<span class="pill ok">Beli</span>' : '<span class="pill bad">Jual</span>'} <b>${esc(PAIR[t.pair] || t.pair)}</b> ${rpx(t.valueIdr)}<div class="small muted">${esc(t.reason)}</div></td><td class="small">${rpx(t.price)}</td><td class="small" style="${toneOf(t.realizedPnl)}">${t.realizedPnl != null ? rpx(t.realizedPnl) : '—'}</td></tr>`).join('')
+    d.trades.map(t => `<tr><td class="small">${fmtTime(t.t)}</td><td>${t.auto === 'stop' ? '<span class="pill bad">Stop-loss</span>' : t.auto === 'target' ? '<span class="pill ok">Take-profit</span>' : t.side === 'beli' ? '<span class="pill ok">Beli</span>' : '<span class="pill bad">Jual</span>'} <b>${esc(PAIR[t.pair] || t.pair)}</b> ${rpx(t.valueIdr)}<div class="small muted">${esc(t.reason)}</div></td><td class="small">${rpx(t.price)}</td><td class="small" style="${toneOf(t.realizedPnl)}">${t.realizedPnl != null ? rpx(t.realizedPnl) : '—'}</td></tr>`).join('')
   }</tbody></table>` : '<div class="empty">Belum ada transaksi. Menahan (tidak bertransaksi) juga keputusan yang sah.</div>';
 
   const r = d.rules;
   $('#tradeRules').innerHTML = [
     `Pair: ${r.pairs.map(p => PAIR[p] || p).join(', ')}`, `Beli maks ${r.maxOrderPct * 100}% ekuitas/order`, `Satu aset maks ${r.maxPositionPct * 100}%`,
     `Rugi harian ${r.dailyLossLimitPct * 100}% → berhenti`, `Maks ${r.maxTradesPerDay} transaksi/hari`, `Minimal ${rpx(r.minOrderIdr)}`,
-    `Biaya ${(r.feeRate * 100).toFixed(1)}% + spread`, `Analisis tiap ${r.decisionEveryHours} jam`, 'Tanpa leverage & short'
+    `Biaya ${(r.feeRate * 100).toFixed(1)}% + spread`, `Analisis tiap ${r.decisionEveryHours} jam`, 'Tanpa leverage & short',
+    'Beli wajib level batal & target', 'Stop-loss/take-profit dicek tiap menit'
   ].map(t => `<span class="chip">${esc(t)}</span>`).join('');
 }
 $('#tradeRun').onclick = async () => {
