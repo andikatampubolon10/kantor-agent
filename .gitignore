@@ -39,3 +39,4 @@ media-outbox/
 baileys_auth_backup_*/
 # paper trading (simulasi)
 .joko-trading.json
+.joko-trading.arsip-*.json
