@@ -1711,9 +1711,27 @@ function lineChart(el, series) {
   }
   const fmtT = (t) => new Date(t).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
   svg += `<text class="axis" x="${padL}" y="${H - 6}">${fmtT(t0)}</text><text class="axis" x="${W}" y="${H - 6}" text-anchor="end">${fmtT(t1)}</text>`;
+  // Data dicatat tiap 15 menit; jeda > 45 menit = Joko mati -> garis diputus & area diarsir.
+  // Data lama dijarangkan server (maks. ~400 titik), jadi ambang ikut kerapatan data (3× jarak median).
+  const ref = series.reduce((a, s) => s.points.length > a.length ? s.points : a, []);
+  const diffs = ref.slice(1).map((p, i) => p.t - ref[i].t).sort((a, b) => a - b);
+  const GAP = Math.max(45 * 60 * 1000, 3 * (diffs[diffs.length >> 1] || 0));
+  for (let i = 1; i < ref.length; i++) {
+    if (ref[i].t - ref[i - 1].t <= GAP) continue;
+    const x0 = x(ref[i - 1].t), x1 = x(ref[i].t);
+    svg += `<rect x="${x0.toFixed(1)}" y="${padT}" width="${Math.max(1, x1 - x0).toFixed(1)}" height="${H - padT - padB}" fill="var(--surface-2)" opacity=".7"><title>Joko mati: ${fmtT(ref[i - 1].t)} – ${fmtT(ref[i].t)}</title></rect>`;
+    if (x1 - x0 > 70) svg += `<text class="axis" x="${((x0 + x1) / 2).toFixed(1)}" y="${padT + 14}" text-anchor="middle">Joko mati</text>`;
+  }
   for (const s of series) {
-    if (s.points.length < 2) continue;
-    svg += `<polyline fill="none" stroke="${s.color}" stroke-width="${s.width || 2}" ${s.dash ? 'stroke-dasharray="5 4"' : ''} stroke-linejoin="round" points="${s.points.map(p => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>`;
+    const segs = [];
+    for (const p of s.points) {
+      const cur = segs.at(-1);
+      if (cur && p.t - cur.at(-1).t <= GAP) cur.push(p); else segs.push([p]);
+    }
+    for (const seg of segs) {
+      if (seg.length === 1) { svg += `<circle cx="${x(seg[0].t).toFixed(1)}" cy="${y(seg[0].v).toFixed(1)}" r="2.5" fill="${s.color}"/>`; continue; }
+      svg += `<polyline fill="none" stroke="${s.color}" stroke-width="${s.width || 2}" ${s.dash ? 'stroke-dasharray="5 4"' : ''} stroke-linejoin="round" points="${seg.map(p => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ')}"/>`;
+    }
   }
   el.innerHTML = svg + '</svg>';
 }
@@ -1742,7 +1760,7 @@ async function loadTrading() {
     kpi('Total', `${fmtNum(s.trades)} transaksi`, `biaya ${rpx(s.feesPaid)} · drawdown ${(s.maxDrawdownPct * 100).toFixed(2)}%${s.winRate != null ? ` · win ${(s.winRate * 100).toFixed(0)}%` : ''}`)
   ].join('');
 
-  $('#tradeLegend').innerHTML = '<span><i style="background:#f26a2a"></i>Joko</span><span><i style="background:#6cb2ff"></i>Beli-lalu-diam</span>';
+  $('#tradeLegend').innerHTML = '<span><i style="background:#f26a2a"></i>Joko</span><span><i style="background:#6cb2ff"></i>Beli-lalu-diam</span><span><i style="background:var(--surface-2);outline:1px solid var(--line)"></i>Joko mati</span>';
   lineChart($('#tradeChart'), [
     { name: 'Beli-lalu-diam', color: '#6cb2ff', dash: true, points: d.equity.map(p => ({ t: p.t, v: p.bench })) },
     { name: 'Joko', color: '#f26a2a', width: 2.5, points: d.equity.map(p => ({ t: p.t, v: p.equity })) }
