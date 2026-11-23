@@ -238,3 +238,21 @@ test('runner: mulai setelah jam 21 WIB tidak langsung mengirim laporan harian', 
   await r.mark();
   assert.equal(notes.filter(n => /Laporan Paper Trading/.test(n)).length, 0);
 });
+
+test('runner: setelah restart harga langsung diambil walau belum jadwal catat', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-trade-'));
+  const file = path.join(dir, 't.json');
+  let t = T0;
+  const market = { snapshot: async () => mkt(1e9, 3e7, t), closes: async () => [] };
+  const quiet = { log() {}, warn() {} };
+  const decide = async () => ({ text: '{"aksi":[]}', model: 'm' });
+  const r1 = createTradingRunner({ file, market, decide, now: () => t, log: quiet });
+  await r1.tick();
+  const marks = JSON.parse(fs.readFileSync(file, 'utf8')).equity.length;
+  t += 60 * 1000; // "restart" 1 menit kemudian
+  const r2 = createTradingRunner({ file, market, decide, now: () => t, log: quiet });
+  assert.equal(r2.status().stats, null);
+  await r2.tick();
+  assert.ok(r2.status().stats, 'statistik tersedia setelah tick pertama');
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).equity.length, marks, 'tidak menambah titik catat di luar jadwal');
+});

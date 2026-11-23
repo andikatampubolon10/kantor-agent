@@ -187,6 +187,7 @@ export function createTradingRunner({
     try {
       const t = now();
       if (!state || !state.meta?.lastMarkAt || t - state.meta.lastMarkAt >= markEveryMs) await mark();
+      else if (!lastMarket) await refreshMarket(); // setelah restart: harga untuk panel tanpa menunggu jadwal catat
       const every = state.rules.decisionEveryHours * 3600 * 1000;
       const last = state.meta.lastDecisionAt || 0;
       const attempt = state.meta.lastAttemptAt || 0;

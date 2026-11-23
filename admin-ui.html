@@ -1753,7 +1753,16 @@ async function loadTrading() {
   $('#tradeStop').classList.toggle('danger', !d.halted);
   $('#tradeRun').disabled = !!(d.deciding || d.paused || d.halted);
 
-  $('#tradeKpi').innerHTML = [
+  // Tanpa harga terbaru (sesaat setelah Joko dimulai ulang) statistik belum bisa dihitung.
+  if (!d.stats) {
+    const last = d.equity.at(-1);
+    $('#tradeKpi').innerHTML = [
+      kpi('Ekuitas (simulasi)', last ? rpx(last.equity) : '—', `catatan terakhir ${last ? ago(last.t) : '—'} · memuat harga terbaru…`),
+      kpi('Beli-lalu-diam', last ? rpx(last.bench) : '—', 'catatan terakhir'),
+      kpi('Hari ini', '—', 'memuat harga terbaru…'),
+      kpi('Total', `${fmtNum(d.trades.length)} transaksi`, 'memuat harga terbaru…')
+    ].join('');
+  } else $('#tradeKpi').innerHTML = [
     kpi('Ekuitas (simulasi)', rpx(s.equity), `<span style="${toneOf(s.returnPct)}">${pctx(s.returnPct)}</span> dari modal ${rpx(d.rules.startingCash)}`),
     kpi('Beli-lalu-diam', rpx(s.benchmarkEquity), `<span style="${toneOf(s.benchmarkReturnPct)}">${pctx(s.benchmarkReturnPct)}</span> pembanding`),
     kpi('Hari ini', `<span style="${toneOf(s.dayPnl)}">${s.dayPnl >= 0 ? '+' : ''}${rpx(s.dayPnl)}</span>`, `${s.tradesToday}/${d.rules.maxTradesPerDay} transaksi`),
