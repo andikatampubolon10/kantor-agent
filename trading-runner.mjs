@@ -17,6 +17,15 @@ const UA = 'kantor-agent-paper-trading/1.0';
 const rp = (n) => `Rp${Math.round(n).toLocaleString('id-ID')}`;
 const pct = (x) => (x == null ? '-' : `${x >= 0 ? '+' : ''}${(x * 100).toFixed(2)}%`);
 
+/** Tolak bila janji tidak selesai dalam `ms` (janji asal dibiarkan; hasilnya diabaikan). */
+export function withTimeout(promise, ms, label = 'langkah') {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} tidak merespons dalam ${Math.round(ms / 1000)} dtk`)), ms); })
+  ]).finally(() => clearTimeout(timer));
+}
+
 export function createIndodaxMarket({ fetchImpl = globalThis.fetch, timeoutMs = 15000, retries = 1, now = () => Date.now() } = {}) {
   async function getJson(url) {
     for (let attempt = 0; ; attempt++) {
@@ -87,11 +96,16 @@ export function formatReport(state, market, { title = '📊 *Laporan Paper Tradi
 export function createTradingRunner({
   file, market, decide, notify = async () => {}, log = console, now = () => Date.now(),
   rules = DEFAULT_RULES, markEveryMs = 15 * 60 * 1000, reportHourWib = 21, tickMs = 60 * 1000,
-  retryAfterMs = 15 * 60 * 1000
+  retryAfterMs = 15 * 60 * 1000,
+  // Batas per langkah ambil data & batas total satu analisis: koneksi yang macet (mis. setelah laptop
+  // tidur/bangun) tidak boleh menahan flag `deciding` selamanya dan membuat jadwal berikutnya terlewat.
+  stepTimeoutMs = 45 * 1000, maxDecisionMs = 20 * 60 * 1000
 }) {
   let state = readJsonFile(file, null, { validate: d => d && typeof d === 'object' && d.version === 1 });
   let lastMarket = null;
   let deciding = false;
+  let decidingSince = 0;
+  let decisionRun = 0; // nomor analisis aktif; hasil analisis yang sudah dibatalkan watchdog diabaikan
   let lastError = null;
   let timer = null;
   const save = () => { if (state) writeJsonAtomic(file, state); };
@@ -99,7 +113,7 @@ export function createTradingRunner({
   const pairs = () => state?.rules.pairs || rules.pairs;
 
   async function refreshMarket() {
-    lastMarket = await market.snapshot(pairs());
+    lastMarket = await withTimeout(market.snapshot(pairs()), stepTimeoutMs, 'data harga Indodax');
     return lastMarket;
   }
 
@@ -132,23 +146,33 @@ export function createTradingRunner({
     if (!state) await mark();
     if (state.paused) throw new Error('Trading sedang dijeda.');
     if (state.halted) throw new Error(`Trading dihentikan: ${state.halted.reason}`);
+    const run = ++decisionRun;
     deciding = true;
+    decidingSince = now();
+    log.log?.(`[Trading] ⏱️ Analisis #${run} dimulai (${trigger}).`);
     try {
+      // Gagal ambil harga (mis. jaringan belum pulih setelah laptop bangun) -> dicoba lagi tick berikutnya.
       const m = await mark();
       const closes = {};
       for (const p of pairs()) {
-        try { closes[p] = await market.closes(p, 72); } catch (err) { closes[p] = []; log.warn?.(`[Trading] Candle ${p} gagal: ${err.message}`); }
+        try { closes[p] = await withTimeout(market.closes(p, 72), stepTimeoutMs, `candle ${p}`); } catch (err) { closes[p] = []; log.warn?.(`[Trading] Candle ${p} gagal: ${err.message}`); }
       }
       const prompt = buildDecisionPrompt({ state, market: m, closes, now: now() });
       state.meta.lastAttemptAt = now();
       save();
+      log.log?.(`[Trading] ⏱️ Analisis #${run}: data siap, menunggu keputusan AI.`);
       let out;
       try {
         out = await decide(prompt);
       } catch (err) {
+        if (run !== decisionRun) throw new Error(`analisis #${run} sudah dibatalkan watchdog`);
         recordFailedDecision(state, { now: now(), trigger, error: `agen gagal: ${err.message}` });
         save();
         throw err;
+      }
+      if (run !== decisionRun) {
+        log.warn?.(`[Trading] Hasil analisis #${run} datang terlambat (sudah dibatalkan watchdog) — diabaikan.`);
+        throw new Error(`analisis #${run} sudah dibatalkan watchdog`);
       }
       let decision;
       try {
@@ -182,11 +206,23 @@ export function createTradingRunner({
       lastError = null;
       return record;
     } catch (err) {
-      lastError = { at: now(), message: err.message };
+      if (run === decisionRun) lastError = { at: now(), message: err.message };
       throw err;
     } finally {
-      deciding = false;
+      if (run === decisionRun) deciding = false;
     }
+  }
+
+  /** Watchdog: analisis yang macet melewati maxDecisionMs dilepas agar jadwal berikutnya tetap jalan. */
+  function releaseStuckDecision(t) {
+    if (!deciding || t - decidingSince < maxDecisionMs) return false;
+    const run = decisionRun;
+    decisionRun++;
+    deciding = false;
+    const mins = Math.round((t - decidingSince) / 60000);
+    lastError = { at: t, message: `analisis #${run} macet ${mins} menit — dilepas watchdog` };
+    log.warn?.(`[Trading] ⚠️ Analisis #${run} macet ${mins} menit — dilepas watchdog, jadwal dilanjutkan.`);
+    return true;
   }
 
   /** Stop-loss / take-profit: dicek tiap tick (±1 menit) selama ada posisi berlevel. */
@@ -209,6 +245,7 @@ export function createTradingRunner({
   async function tick() {
     try {
       const t = now();
+      releaseStuckDecision(t);
       if (!state || !state.meta?.lastMarkAt || t - state.meta.lastMarkAt >= markEveryMs) await mark();
       else if (!lastMarket) await refreshMarket(); // setelah restart: harga untuk panel tanpa menunggu jadwal catat
       await enforceExits();

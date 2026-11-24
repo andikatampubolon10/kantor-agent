@@ -259,6 +259,47 @@ test('runner: setelah restart harga langsung diambil walau belum jadwal catat', 
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).equity.length, marks, 'tidak menambah titik catat di luar jadwal');
 });
 
+test('runner: candle yang macet dibatasi waktu, analisis tetap jalan', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-trade-'));
+  const t = T0;
+  const market = { snapshot: async () => mkt(1e9, 3e7, t), closes: () => new Promise(() => {}) }; // tidak pernah selesai
+  let prompts = 0;
+  const r = createTradingRunner({ file: path.join(dir, 't.json'), market, decide: async () => { prompts++; return { text: '{"aksi":[]}', model: 'm' }; }, now: () => t, log: { log() {}, warn() {} }, stepTimeoutMs: 20 });
+  const rec = await r.runDecision('manual');
+  assert.equal(prompts, 1);
+  assert.ok(rec.id);
+  assert.equal(r.status().deciding, false);
+});
+
+test('runner: watchdog melepas analisis macet; hasil terlambat diabaikan; jadwal lanjut', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-trade-'));
+  let t = T0;
+  const market = { snapshot: async () => mkt(1e9, 3e7, t), closes: async () => [] };
+  let release;
+  let calls = 0;
+  const decide = () => {
+    calls++;
+    if (calls === 1) return new Promise(res => { release = () => res({ text: '{"aksi":[]}', model: 'm' }); });
+    return Promise.resolve({ text: '{"aksi":[]}', model: 'm' });
+  };
+  const warns = [];
+  const r = createTradingRunner({ file: path.join(dir, 't.json'), market, decide, now: () => t, log: { log() {}, warn: (x) => warns.push(x) }, maxDecisionMs: 20 * 60 * 1000 });
+  const stuck = r.runDecision('jadwal').catch(e => e);
+  await new Promise(res => setImmediate(res));
+  await new Promise(res => setImmediate(res));
+  assert.equal(r.status().deciding, true);
+  t += 21 * 60 * 1000;
+  await r.tick(); // watchdog melepas, lalu analisis baru dijadwalkan (sudah lewat retryAfterMs)
+  assert.ok(warns.some(w => /dilepas watchdog/.test(w)));
+  assert.equal(calls, 2, 'analisis terjadwal berikutnya berjalan');
+  assert.equal(r.status().state.decisions.length, 1);
+  release();
+  const err = await stuck;
+  assert.match(err.message, /dibatalkan watchdog/);
+  assert.equal(r.status().state.decisions.length, 1, 'hasil terlambat tidak dicatat');
+  assert.equal(r.status().deciding, false);
+});
+
 test('runner: refreshIfStale mengambil harga live hanya bila sudah basi', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'joko-trade-'));
   let t = T0, calls = 0, btc = 1e9;
