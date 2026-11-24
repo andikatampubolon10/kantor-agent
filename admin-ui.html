@@ -434,6 +434,7 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
       <a href="#/pemakaian" data-page="pemakaian"><span class="ti t-sky"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20V10M10 20V4M16 20v-8M22 20H2"/></svg></span><span>Pemakaian</span></a>
       <a href="#/percakapan" data-page="percakapan"><span class="ti t-rose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg></span><span>Percakapan</span></a>
       <a href="#/trading" data-page="trading"><span class="ti t-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg></span><span>Paper Trading</span></a>
+      <a href="#/coding" data-page="coding"><span class="ti t-sky"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></svg></span><span>Coding</span></a>
       <div class="nav-sec">Pengaturan</div>
       <a href="#/model" data-page="model"><span class="ti t-violet"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v6M6 15v6M18 3v10M18 19v2M12 3v2M12 11v10"/><circle cx="6" cy="12" r="2.5"/><circle cx="12" cy="8" r="2.5"/><circle cx="18" cy="16" r="2.5"/></svg></span><span>Model &amp; Routing</span></a>
       <a href="#/skill" data-page="skill"><span class="ti t-green"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 3 7l9 5 9-5-9-5z"/><path d="m3 12 9 5 9-5M3 17l9 5 9-5"/></svg></span><span>Skill</span></a>
@@ -649,6 +650,35 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
         <div class="chips" id="tradeRules"></div>
         <p class="small muted" style="margin:12px 0 0">Aturan ditegakkan oleh kode, bukan oleh AI: usulan yang melanggar otomatis ditolak. Perintah WhatsApp: <i>"Joko status trading"</i>, <i>"Joko stop trading"</i>, <i>"Joko lanjut trading"</i>, <i>"Joko analisis trading sekarang"</i>.</p>
       </div>
+    </section>
+
+    <!-- CODING -->
+    <section id="page-coding" class="hidden">
+      <div class="head">
+        <div><h1>Coding</h1><p class="sub">Joko mengerjakan tugas coding di folder kerja terpisah, <b>satu branch git per tugas</b>. Tidak ada push tanpa perintah Mas.</p></div>
+      </div>
+      <p class="small" id="codeBanner" style="margin:0 0 14px"></p>
+      <div class="grid g2">
+        <form class="card stack" id="codeForm" autocomplete="off" style="gap:10px">
+          <h2 style="margin:0">Tugas baru</h2>
+          <input type="text" id="codeProject" list="codeProjects" placeholder="Nama proyek, mis. web-toko (baru = dibuat otomatis)" maxlength="64" required>
+          <datalist id="codeProjects"></datalist>
+          <textarea id="codeInstr" placeholder="Apa yang harus Joko kerjakan? Mis. Buat API Express dengan endpoint /produk dan tesnya." required style="font-family:inherit;font-size:14px;min-height:110px"></textarea>
+          <label class="row small" style="gap:8px;cursor:pointer"><input type="checkbox" id="codeAutoPr"> Setelah selesai &amp; tes tidak gagal: push + buat Pull Request otomatis</label>
+          <div class="row" style="justify-content:space-between"><span class="small muted" id="codeHint"></span><button class="btn primary" type="submit">Kerjakan</button></div>
+        </form>
+        <div class="card"><h2>Proyek</h2><div class="table-wrap" id="codeProjectsTbl"></div></div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="stat-top"><h2 style="margin:0">GitHub</h2><span class="small muted" id="codeGhStatus">Memeriksa…</span></div>
+        <div class="table-wrap" id="codeRepos" style="max-height:360px;overflow:auto"></div>
+      </div>
+      <div class="card" style="margin-top:16px"><h2>Tugas</h2><div class="list-card" id="codeTasks" style="max-height:none"></div></div>
+      <div class="card hidden" id="codeDiffCard" style="margin-top:16px">
+        <div class="stat-top"><h2 style="margin:0" id="codeDiffTitle">Diff</h2><button class="btn sm" type="button" id="codeDiffClose">Tutup</button></div>
+        <pre class="tool-out" id="codeDiff" style="max-height:70vh"></pre>
+      </div>
+      <p class="small muted" style="margin:14px 0 0">Perintah WhatsApp: <i>"Joko coding &lt;proyek&gt;: &lt;instruksi&gt;"</i>, <i>"Joko coding pr &lt;proyek&gt;: &lt;instruksi&gt;"</i>, <i>"Joko coding repo"</i>, <i>"Joko coding clone &lt;repo&gt;"</i>, <i>"Joko coding status"</i>, <i>"Joko coding lihat C1"</i>, <i>"Joko coding push C1"</i>, <i>"Joko coding gabung C1"</i>.</p>
     </section>
 
     <!-- TOOLS & MCP -->
@@ -942,7 +972,7 @@ function stopAll() { timers.forEach(clearInterval); timers = []; }
 function every(fn, msInterval) { fn(); timers.push(setInterval(() => { if (!document.hidden) fn(); }, msInterval)); }
 function route() {
   const page = (location.hash.match(/^#\/(\w+)/) || [])[1] || 'beranda';
-  const titles = { beranda: 'Beranda', pemakaian: 'Pemakaian', percakapan: 'Percakapan', trading: 'Paper Trading', model: 'Model & Routing', skill: 'Skill', tools: 'Tools & MCP', jadwal: 'Jadwal', memori: 'Memori & Kontak', file: 'File', log: 'Log' };
+  const titles = { beranda: 'Beranda', pemakaian: 'Pemakaian', percakapan: 'Percakapan', trading: 'Paper Trading', coding: 'Coding', model: 'Model & Routing', skill: 'Skill', tools: 'Tools & MCP', jadwal: 'Jadwal', memori: 'Memori & Kontak', file: 'File', log: 'Log' };
   const valid = titles[page] ? page : 'beranda';
   stopAll();
   window.scrollTo(0, 0);
@@ -958,6 +988,7 @@ function route() {
   if (valid === 'log') { startLog(); every(loadSide, 10000); }
   if (valid === 'skill') { loadSkills(); every(loadSide, 10000); }
   if (valid === 'trading') { every(loadTrading, 15000); every(loadSide, 10000); }
+  if (valid === 'coding') { every(loadCoding, 8000); every(loadGithub, 60000); every(loadSide, 10000); }
   if (valid === 'tools') { every(() => loadTools(), 20000); every(loadSide, 10000); }
   if (valid === 'jadwal') { every(loadJobList, 15000); every(loadSide, 10000); }
   if (valid === 'memori') { loadMemory(); loadContacts(); every(loadSide, 10000); }
@@ -1817,6 +1848,99 @@ async function loadTrading() {
     'Beli wajib level batal & target', 'Stop-loss/take-profit dicek tiap menit'
   ].map(t => `<span class="chip">${esc(t)}</span>`).join('');
 }
+// ---------- Coding ----------
+const CODE_ST = { antre: ['warn', 'Antre'], jalan: ['warn', 'Dikerjakan…'], selesai: ['ok', 'Selesai'], gagal: ['bad', 'Gagal'], 'tanpa-perubahan': ['', 'Tanpa perubahan'] };
+let codeData = null;
+async function loadCoding() {
+  try { codeData = await api('coding'); } catch (e) { if (e.status !== 401) $('#codeTasks').innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  const d = codeData;
+  const active = d.tasks.find(t => t.id === d.activeId);
+  $('#codeBanner').innerHTML = active
+    ? `<span class="pill warn">Bekerja</span> ${esc(active.id)} di <b>${esc(active.project)}</b> sejak ${ago(active.startedAt)}${d.pending ? ` · ${d.pending} antre` : ''}.`
+    : `<span class="pill ok">Siap</span> Folder kerja <code>${esc(d.root)}</code> · batas ${d.timeoutMin} menit per tugas.`;
+  $('#codeHint').textContent = `Folder: ${d.root}`;
+  $('#codeProjects').innerHTML = d.projects.map(p => `<option value="${esc(p.name)}">`).join('');
+  $('#codeProjectsTbl').innerHTML = d.projects.length ? `<table><thead><tr><th>Proyek</th><th>Tugas</th><th>Terakhir</th></tr></thead><tbody>${
+    d.projects.map(p => `<tr><td><b>${esc(p.name)}</b>${p.git ? '' : ' <span class="small muted">(belum git)</span>'}</td><td>${p.tasks}</td><td class="small">${p.lastAt ? ago(p.lastAt) : '—'}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="empty">Belum ada proyek. Proyek dibuat otomatis saat tugas pertama.</div>';
+  $('#codeTasks').innerHTML = d.tasks.length ? d.tasks.map(t => {
+    const [tone, label] = CODE_ST[t.status] || ['', t.status];
+    const r = t.report || {};
+    const tests = r.tests === 'lulus' ? '<span class="pill ok">Tes lulus</span>' : r.tests === 'gagal' ? '<span class="pill bad">Tes gagal</span>' : '';
+    const done = t.status === 'selesai' || (t.status === 'gagal' && t.files?.length);
+    return `<div class="li" style="cursor:default;display:block">
+      <div class="row" style="justify-content:space-between"><div class="row"><b class="mono">${esc(t.id)}</b><span class="pill ${tone}">${label}</span>${tests}${t.mergedAt ? '<span class="pill ok">Digabung</span>' : ''}${t.pushedAt ? '<span class="pill ok">Di-push</span>' : ''}</div><span class="small muted">${esc(t.project)} · ${fmtTime(t.createdAt)}${t.finishedAt && t.startedAt ? ' · ' + ms(t.finishedAt - t.startedAt) : ''}</span></div>
+      <div style="margin:6px 0;white-space:pre-wrap">${esc(t.instruction)}</div>
+      ${t.error ? `<div class="small" style="color:var(--bad);margin:4px 0">${esc(t.error)}</div>` : ''}
+      ${r.summary ? `<div class="small" style="margin:4px 0">${esc(r.summary)}</div>` : ''}
+      ${r.notes ? `<div class="small muted" style="margin:4px 0">📝 ${esc(r.notes)}</div>` : ''}
+      ${(t.warnings || []).map(w => `<div class="small" style="color:var(--warn);margin:4px 0">⚠️ ${esc(w)}</div>`).join('')}
+      ${t.files?.length ? `<div class="chips" style="margin:6px 0">${t.files.slice(0, 20).map(f => `<span class="chip">${esc(f.status)} ${esc(f.path)}</span>`).join('')}${t.files.length > 20 ? `<span class="chip">+${t.files.length - 20}</span>` : ''}</div>` : ''}
+      ${t.branch ? `<div class="small muted mono" style="margin:4px 0">${esc(t.branch)} ← ${esc(t.baseBranch || '')}${t.diffStat ? ' · ' + esc(t.diffStat) : ''}${t.pulled ? ' · di-pull dari GitHub' : ''}</div>` : ''}
+      ${t.pr?.url ? `<div class="small" style="margin:4px 0">🔗 <a href="${esc(t.pr.url)}" target="_blank" rel="noopener">Pull Request #${esc(t.pr.number)}</a></div>` : t.compareUrl ? `<div class="small" style="margin:4px 0">🔗 <a href="${esc(t.compareUrl)}" target="_blank" rel="noopener">Buat Pull Request</a></div>` : ''}
+      ${done ? `<div class="row" style="margin-top:8px"><button class="btn sm" type="button" data-cdiff="${esc(t.id)}">Lihat diff</button>${t.status === 'selesai' && !t.mergedAt ? `<button class="btn sm" type="button" data-cmerge="${esc(t.id)}" data-cpr="${t.pr ? 1 : ''}">${t.pr ? 'Merge PR' : 'Gabung ke ' + esc(t.baseBranch || 'main')}</button>` : ''}${t.pr ? '' : `<button class="btn sm" type="button" data-cpush="${esc(t.id)}">${t.pushedAt ? 'Push ulang' : 'Push + PR'}</button>`}</div>` : ''}
+    </div>`;
+  }).join('') : '<div class="empty">Belum ada tugas coding.</div>';
+}
+function diffHtml(text) {
+  return text.split('\n').map(l => {
+    const c = l.startsWith('+++') || l.startsWith('---') || l.startsWith('diff ') ? 'color:var(--text);font-weight:700'
+      : l.startsWith('+') ? 'color:var(--ok)' : l.startsWith('-') ? 'color:var(--bad)' : l.startsWith('@@') ? 'color:var(--accent-2)' : '';
+    return c ? `<span style="${c}">${esc(l)}</span>` : esc(l);
+  }).join('\n');
+}
+$('#codeTasks').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('button'); if (!b) return;
+  if (b.dataset.cdiff) {
+    try {
+      const r = await api('coding/diff?id=' + encodeURIComponent(b.dataset.cdiff));
+      $('#codeDiffTitle').textContent = 'Diff ' + r.id;
+      $('#codeDiff').innerHTML = r.diff ? diffHtml(r.diff) : 'Diff tidak tersedia.';
+      $('#codeDiffCard').classList.remove('hidden');
+      $('#codeDiffCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) { toast(e.message, true); }
+  } else if (b.dataset.cmerge) {
+    if (!await confirmDialog({ title: `Gabung ${b.dataset.cmerge}?`, html: b.dataset.cpr ? 'Pull Request tugas ini di-<b>merge di GitHub</b> ke branch utama, lalu salinan lokal di-pull.' : 'Perubahan tugas ini digabung ke branch utama proyek <b>di laptop</b> (belum di-push).', okText: b.dataset.cpr ? 'Merge PR' : 'Gabung', danger: !!b.dataset.cpr })) return;
+    try { toast((await api('coding/merge', { method: 'POST', body: { id: b.dataset.cmerge } })).message); } catch (e) { toast(e.message, true); }
+    loadCoding();
+  } else if (b.dataset.cpush) {
+    if (!await confirmDialog({ title: `Push ${b.dataset.cpush}?`, html: 'Branch tugas ini dikirim ke remote <code>origin</code> dan (untuk repo GitHub) dibuatkan Pull Request. Branch utama tidak ikut di-push.', okText: 'Push' })) return;
+    try { toast((await api('coding/push', { method: 'POST', body: { id: b.dataset.cpush } })).message); } catch (e) { toast(e.message, true); }
+    loadCoding();
+  }
+});
+$('#codeDiffClose').onclick = () => $('#codeDiffCard').classList.add('hidden');
+async function loadGithub() {
+  let g;
+  try { g = await api('coding/github'); } catch (e) { $('#codeGhStatus').textContent = e.message; return; }
+  if (!g.ok) {
+    $('#codeGhStatus').innerHTML = '<span class="pill warn">Belum login</span>';
+    $('#codeRepos').innerHTML = `<div class="empty">${esc(g.error || 'GitHub CLI belum siap.')}<br><span class="small">Di laptop: buka PowerShell baru, jalankan <code>gh auth login</code>.</span></div>`;
+    return;
+  }
+  $('#codeGhStatus').innerHTML = `<span class="pill ok">Terhubung</span> ${esc(g.login)}`;
+  $('#codeRepos').innerHTML = g.repos?.length ? `<table><thead><tr><th>Repo</th><th>Update</th><th></th></tr></thead><tbody>${
+    g.repos.map(r => `<tr><td><b>${esc(r.name)}</b>${r.private ? ' <span class="small muted">🔒</span>' : ''}${r.description ? `<div class="small muted">${esc(r.description)}</div>` : ''}</td><td class="small">${r.pushedAt ? ago(r.pushedAt) : '—'}</td><td style="text-align:right">${r.cloned ? '<span class="pill ok">Proyek</span>' : `<button class="btn sm" type="button" data-cclone="${esc(r.full)}">Clone</button>`}</td></tr>`).join('')}</tbody></table>`
+    : `<div class="empty">${esc(g.error || 'Tidak ada repo.')}</div>`;
+}
+$('#codeRepos').addEventListener('click', async (ev) => {
+  const b = ev.target.closest('[data-cclone]'); if (!b) return;
+  b.disabled = true; b.textContent = 'Meng-clone…';
+  try { const r = await api('coding/clone', { method: 'POST', body: { repo: b.dataset.cclone } }); toast(r.message); $('#codeProject').value = r.project; }
+  catch (e) { toast(e.message, true); }
+  loadGithub(); loadCoding();
+});
+$('#codeForm').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const project = $('#codeProject').value.trim(), instruction = $('#codeInstr').value.trim();
+  try {
+    const r = await api('coding/start', { method: 'POST', body: { project, instruction, autoPr: $('#codeAutoPr').checked } });
+    toast(`Tugas ${r.id} diterima${r.ahead ? ` (antre, ${r.ahead} di depan)` : ''}. Hasilnya juga dikirim ke WhatsApp.`);
+    $('#codeInstr').value = '';
+  } catch (e) { toast(e.message, true); }
+  loadCoding();
+};
+
 $('#tradeRun').onclick = async () => {
   try { toast((await api('trading/run', { method: 'POST', body: {} })).message); } catch (e) { toast(e.message, true); }
   setTimeout(loadTrading, 1500);

@@ -90,6 +90,8 @@ import {
 } from './model-router.mjs';
 import { createAdminPanel } from './admin-panel.mjs';
 import { createTradingRunner, createIndodaxMarket } from './trading-runner.mjs';
+import { createCodingManager, defaultCodingRoot, parseCodingCommand, formatTaskShort, formatTaskResult, CODING_HELP } from './coding-mode.mjs';
+import { createGithub } from './github-cli.mjs';
 import {
   connectorStatus,
   normalizeConnectorSettings,
@@ -810,7 +812,8 @@ function agyEnv() {
  */
 // session (opsional) = penyimpan sesi tersendiri { get(): id|null, save(id) }, mis. chat dari panel
 // admin, agar tidak bercampur dengan sesi WhatsApp owner.
-async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeText, label, session }) {
+// cwd/timeoutMs (opsional): Mode Coding menjalankan agen di folder proyek dengan batas waktu lebih panjang.
+async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeText, label, session, cwd, timeoutMs = OWNER_TASK_TIMEOUT_MS }) {
   if (session) persist = true;
   const saved = session ? { mode: 'cli', conversationId: session.get() } : (persist ? getSavedSession() : null);
   const resumeId = saved?.mode === 'cli' ? saved.conversationId : null;
@@ -832,7 +835,7 @@ async function askAgyCli(promptBody, { persona, persist, targetRecipient, routeT
   const runInfo = { at: Date.now(), model, tier: route.tier, reason: route.reason, persist: !!persist, chat: targetRecipient ? chatKey(targetRecipient) : (label || null), label: label || (persist ? 'owner' : 'jadwal') };
   try {
     const perm = ownerMcp();
-    const run = (m) => runAgyCli({ agyPath: AGY_PATH, prompt, resumeId, timeoutMs: OWNER_TASK_TIMEOUT_MS, env: agyEnv(), allowMcpServers: perm.servers, denyMcpTools: perm.deny, model: m });
+    const run = (m) => runAgyCli({ agyPath: AGY_PATH, prompt, resumeId, timeoutMs, env: agyEnv(), allowMcpServers: perm.servers, denyMcpTools: perm.deny, model: m, ...(cwd ? { cwd } : {}) });
     let result;
     let note = '';
     try {
@@ -1387,6 +1390,10 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
         }
         // Paper trading: "status trading", "stop trading", "lanjut trading" (OWNER saja)
         if (isOwner && userPrompt && !media && await handleTradingCommand(userPrompt, targetRecipient)) {
+          return;
+        }
+        // Mode Coding: "Joko coding <proyek>: <instruksi>", "Joko coding push C3" (OWNER saja)
+        if (isOwner && userPrompt && !media && await handleCodingCommand(userPrompt, targetRecipient)) {
           return;
         }
 
@@ -2071,7 +2078,97 @@ const BUILTIN_TOOLS = [
   { rule: 'browser', label: 'Browser' }
 ];
 
+// ==========================================
+// MODE CODING (lihat coding-mode.mjs)
+// ==========================================
+const CODING_TIMEOUT_MS = 30 * 60 * 1000;
+const CODING_PERSONA = 'Kamu Joko dalam MODE CODING: insinyur perangkat lunak yang teliti untuk Mas Andika. Kerjakan tugas coding secara mandiri di folder kerja yang diberikan, uji hasilnya, lalu laporkan dengan format yang diminta.';
+const coding = createCodingManager({
+  root: defaultCodingRoot(),
+  jokoDir: process.cwd(),
+  file: path.join(process.cwd(), '.joko-coding.json'),
+  timeoutMs: CODING_TIMEOUT_MS,
+  github: createGithub(), // GitHub CLI (gh) resmi; token dikelola "gh auth login", tidak dibaca Joko
+  // Jalur sendiri (bukan antrean chat): tugas coding yang panjang tidak membuat pesan Mas menunggu.
+  runAgent: ({ prompt, cwd }) => askAgyCli(prompt, { persona: CODING_PERSONA, routeText: 'analisis coding kode program', label: 'coding', cwd, timeoutMs: CODING_TIMEOUT_MS }),
+  notify: (task, text) => sendWhatsApp(task.chat || OWNER_NUMBER, text)
+});
+
+async function handleCodingCommand(text, targetRecipient) {
+  const cmd = parseCodingCommand(text);
+  if (!cmd) return false;
+  try {
+    if (cmd.kind === 'help') {
+      await sendWhatsApp(targetRecipient, (cmd.hint ? `⚠️ ${cmd.hint}\n\n` : '') + CODING_HELP + `\n\nFolder kerja: ${coding.root}`);
+    } else if (cmd.kind === 'status') {
+      const items = coding.list({ limit: 6 });
+      await sendWhatsApp(targetRecipient, items.length
+        ? ['🧑‍💻 *Tugas coding terakhir*', '', ...items.map(formatTaskShort)].join('\n')
+        : 'Belum ada tugas coding. Contoh: *Joko coding web-toko: buat halaman kontak*');
+    } else if (cmd.kind === 'projects') {
+      const ps = coding.projects();
+      await sendWhatsApp(targetRecipient, ps.length
+        ? ['📁 *Proyek coding*', `_${coding.root}_`, '', ...ps.map(p => `• ${p.name} — ${p.tasks} tugas${p.git ? '' : ' (belum git)'}`)].join('\n')
+        : `Belum ada proyek di ${coding.root}. Proyek dibuat otomatis saat tugas pertama.`);
+    } else if (cmd.kind === 'show') {
+      await sendWhatsApp(targetRecipient, formatTaskResult(coding.get(cmd.id)));
+    } else if (cmd.kind === 'repos') {
+      const rs = await coding.repos({ limit: 20 });
+      await sendWhatsApp(targetRecipient, rs.length
+        ? ['🐙 *Repo GitHub Mas* (terbaru)', '', ...rs.map(r => `• ${r.name}${r.private ? ' 🔒' : ''}${r.cloned ? ' ✅ sudah di-clone' : ''}`), '', 'Ambil repo: *Joko coding clone <nama-repo>*'].join('\n')
+        : 'Tidak ada repo yang terlihat.');
+    } else if (cmd.kind === 'clone') {
+      await sendWhatsApp(targetRecipient, `📥 Meng-clone ${cmd.spec}...`);
+      const r = await coding.clone(cmd.spec);
+      await sendWhatsApp(targetRecipient, `✅ *${r.repo}* siap di ${r.dir}.\n\nContoh perintah:\n• *Joko coding ${r.project}: jelaskan struktur & cara kerja proyek ini*\n• *Joko coding pr ${r.project}: <fitur yang ingin ditambahkan>*`);
+    } else if (cmd.kind === 'push') {
+      const t = await coding.push(cmd.id);
+      await sendWhatsApp(targetRecipient, `⬆️ ${t.id} di-push, branch *${t.branch}*.` + (t.pr?.url ? `\n🔗 Pull Request #${t.pr.number}: ${t.pr.url}\nBalas *"Joko coding gabung ${t.id}"* untuk merge.` : t.compareUrl ? `\n🔗 Buat Pull Request: ${t.compareUrl}` : '') + (t.warnings?.length ? `\n⚠️ ${t.warnings.at(-1)}` : ''));
+    } else if (cmd.kind === 'merge') {
+      const t = await coding.merge(cmd.id);
+      await sendWhatsApp(targetRecipient, t.mergedVia === 'pr'
+        ? `🔀 PR #${t.pr.number} (${t.id}) digabung ke *${t.baseBranch}* di GitHub, dan salinan lokal sudah di-pull.`
+        : `🔀 ${t.id} digabung ke ${t.baseBranch} (lokal, belum di-push).`);
+    } else if (cmd.kind === 'start') {
+      const { task, ahead } = coding.start({ project: cmd.project, instruction: cmd.instruction, chat: targetRecipient, autoPr: !!cmd.autoPr });
+      console.log(`[Coding] 📝 ${task.id} diterima: ${task.project}`);
+      await sendWhatsApp(targetRecipient, `🧑‍💻 Tugas coding *${task.id}* diterima untuk proyek *${task.project}*${ahead ? ` (antre, ${ahead} tugas di depan)` : ''}. Joko kerjakan di branch terpisah, maks. ${CODING_TIMEOUT_MS / 60000} menit; hasilnya Joko kabari di sini. Chat biasa tetap bisa jalan.`);
+    }
+  } catch (err) {
+    await sendWhatsApp(targetRecipient, `⚠️ ${err.message}`);
+  }
+  return true;
+}
+
+function codingForPanel() {
+  const st = coding.status();
+  return {
+    root: st.root,
+    activeId: st.active?.id || null,
+    pending: st.pending,
+    timeoutMin: CODING_TIMEOUT_MS / 60000,
+    tasks: coding.list({ limit: 30 }).map(({ reply, ...t }) => ({ ...t, reply: reply ? String(reply).slice(0, 4000) : '' })),
+    projects: coding.projects()
+  };
+}
+
 const panelExtra = {
+  // Mode Coding
+  'GET coding': () => codingForPanel(),
+  'GET coding/diff': ({ query }) => ({ id: String(query.get('id') || '').toUpperCase(), diff: coding.diff(query.get('id')) }),
+  'GET coding/github': async () => {
+    const st = await coding.githubStatus();
+    if (!st.ok) return st;
+    try { return { ...st, repos: await coding.repos({ limit: 30 }) }; } catch (err) { return { ...st, error: err.message, repos: [] }; }
+  },
+  'POST coding/clone': async ({ body }) => { const r = await coding.clone(String(body.repo || '')); return { message: `${r.repo} di-clone sebagai proyek ${r.project}.`, project: r.project }; },
+  'POST coding/start': ({ body }) => {
+    const { task, ahead } = coding.start({ project: String(body.project || '').trim(), instruction: String(body.instruction || ''), chat: OWNER_NUMBER, source: 'panel', autoPr: body.autoPr === true });
+    console.log(`[Coding] 📝 ${task.id} diterima dari panel: ${task.project}`);
+    return { id: task.id, ahead };
+  },
+  'POST coding/push': async ({ body }) => { const t = await coding.push(String(body.id || '')); return { message: t.pr?.url ? `${t.id} di-push, PR #${t.pr.number} dibuat.` : `${t.id} di-push ke branch ${t.branch}.` }; },
+  'POST coding/merge': async ({ body }) => { const t = await coding.merge(String(body.id || '')); return { message: t.mergedVia === 'pr' ? `PR #${t.pr.number} digabung di GitHub.` : `${t.id} digabung ke ${t.baseBranch}.` }; },
   // Paper trading
   'GET trading': async () => { await trading.refreshIfStale(20000); return tradingStatusForPanel(); },
   'POST trading/run': () => {

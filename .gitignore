@@ -40,3 +40,5 @@ baileys_auth_backup_*/
 # paper trading (simulasi)
 .joko-trading.json
 .joko-trading.arsip-*.json
+.joko-coding.json
+.joko-coding-diff/
