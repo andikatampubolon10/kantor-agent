@@ -7,7 +7,8 @@
  *   node setup-connectors.mjs add google       (butuh env JOKO_GOOGLE_CLIENT_ID & JOKO_GOOGLE_CLIENT_SECRET)
  *   node setup-connectors.mjs add canva        (butuh env JOKO_CANVA_CLIENT_ID & JOKO_CANVA_CLIENT_SECRET)
  *   node setup-connectors.mjs add perplexity   (butuh env JOKO_PERPLEXITY_API_KEY)
- *   node setup-connectors.mjs remove <google|canva|perplexity|gmail|drive|calendar>
+ *   node setup-connectors.mjs add github       (butuh env JOKO_GITHUB_TOKEN: token fine-grained baca saja)
+ *   node setup-connectors.mjs remove <google|canva|perplexity|github|gmail|drive|calendar>
  *
  * Kunci rahasia dibaca dari environment variable (bukan argumen) agar tidak terlihat di daftar proses.
  */
@@ -24,12 +25,12 @@ try {
   const config = readMcpConfig(file);
   if (cmd === 'add') {
     const ids = idsOf(target);
-    if (!ids.length) throw new ConnectorError('Sebutkan: google, canva, atau perplexity.');
+    if (!ids.length) throw new ConnectorError('Sebutkan: google, canva, perplexity, atau github.');
     const isCanva = target === 'canva';
     const secrets = {
       clientId: isCanva ? process.env.JOKO_CANVA_CLIENT_ID : process.env.JOKO_GOOGLE_CLIENT_ID,
       clientSecret: isCanva ? process.env.JOKO_CANVA_CLIENT_SECRET : process.env.JOKO_GOOGLE_CLIENT_SECRET,
-      apiKey: process.env.JOKO_PERPLEXITY_API_KEY
+      apiKey: target === 'github' ? process.env.JOKO_GITHUB_TOKEN : process.env.JOKO_PERPLEXITY_API_KEY
     };
     const entries = Object.fromEntries(ids.map(id => [id, connectorEntry(id, secrets)]));
     writeMcpConfig(file, withConnectors(config, entries));

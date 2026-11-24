@@ -1,4 +1,4 @@
-# Pasang connector Joko: Google (Gmail, Drive, Calendar), Canva, Perplexity.
+# Pasang connector Joko: Google (Gmail, Drive, Calendar), Canva, Perplexity, GitHub (baca saja).
 # Jalankan lewat pasang-connector.bat. Kunci rahasia diketik di sini (tersembunyi), tidak lewat chat.
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
@@ -32,6 +32,7 @@ Write-Host '  2. Canva'
 Write-Host '  3. Perplexity'
 Write-Host '  4. Login ulang / sambungkan (buka Antigravity CLI)'
 Write-Host '  5. Hapus connector'
+Write-Host '  6. GitHub (baca saja: repo, issue, PR, status CI)'
 $pick = Read-Host 'Pilih nomor'
 
 switch ($pick) {
@@ -73,8 +74,25 @@ switch ($pick) {
   }
   '4' { Show-Login 'server yang belum tersambung' }
   '5' {
-    $t = Read-Host 'Hapus yang mana? (google / canva / perplexity)'
+    $t = Read-Host 'Hapus yang mana? (google / canva / perplexity / github)'
     Invoke-Setup @('remove', $t.Trim().ToLower())
+  }
+  '6' {
+    $bin = Join-Path $env:LOCALAPPDATA 'Programs\github-mcp-server\github-mcp-server.exe'
+    if (-not (Test-Path $bin)) { throw "Server GitHub MCP belum terpasang di $bin" }
+    Write-Host ''
+    Write-Host 'Buat token fine-grained BACA SAJA (sekali saja):' -ForegroundColor Yellow
+    Write-Host '  a. Buka https://github.com/settings/personal-access-tokens/new'
+    Write-Host '  b. Token name: Joko baca saja   Expiration: 90 hari (atau sesuai selera)'
+    Write-Host '  c. Repository access: All repositories (atau pilih repo tertentu)'
+    Write-Host '  d. Permissions > Repositories, set ke "Read-only":'
+    Write-Host '       Contents, Issues, Pull requests, Actions, Commit statuses  (Metadata otomatis Read-only)'
+    Write-Host '     JANGAN beri izin "Read and write" apa pun.'
+    Write-Host '  e. Generate token, salin (diawali github_pat_).'
+    Write-Host ''
+    $env:JOKO_GITHUB_TOKEN = Read-Secret 'Token GitHub (tidak terlihat saat diketik)'
+    try { Invoke-Setup @('add', 'github') } finally { Remove-Item Env:JOKO_GITHUB_TOKEN -ErrorAction SilentlyContinue }
+    Write-Host 'GitHub tidak perlu login tambahan: token sudah dipakai langsung oleh server.' -ForegroundColor Green
   }
   default { Write-Host 'Batal.' }
 }

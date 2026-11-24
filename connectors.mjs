@@ -58,6 +58,17 @@ export const CONNECTORS = Object.freeze([
     safety: 'Berbayar per pemakaian API Perplexity; riset mendalam paling mahal.'
   },
   {
+    // Server MCP resmi GitHub (biner lokal, github/github-mcp-server). Dua lapis baca-saja:
+    // flag --read-only (tool tulis tidak didaftarkan) + token fine-grained yang izinnya hanya Read.
+    // --lockdown-mode: isi issue/PR dari orang tanpa akses tulis disaring (cegah prompt injection).
+    id: 'github', label: 'GitHub', group: 'github', kind: 'stdio',
+    auth: 'github-pat', envKey: 'GITHUB_PERSONAL_ACCESS_TOKEN',
+    args: ['stdio', '--read-only', '--lockdown-mode', '--toolsets=context,repos,issues,pull_requests,actions'],
+    deny: [],
+    summary: 'Baca repo, issue, pull request, komentar, dan status CI (GitHub Actions).',
+    safety: 'Mode BACA SAJA: server dijalankan dengan --read-only dan token fine-grained berizin Read. Isi dari orang tanpa akses tulis disaring (lockdown). Perubahan kode tetap lewat Mode Coding + Pull Request.'
+  },
+  {
     id: 'notebooklm', label: 'NotebookLM', group: 'notebooklm', kind: 'none',
     available: false, deny: [],
     summary: 'Tanya-jawab dari sumber di notebook NotebookLM.',
@@ -68,8 +79,16 @@ export const CONNECTORS = Object.freeze([
 export const CONNECTOR_GROUPS = Object.freeze({
   google: ['gmail', 'drive', 'calendar'],
   canva: ['canva'],
-  perplexity: ['perplexity']
+  perplexity: ['perplexity'],
+  github: ['github']
 });
+
+/** Lokasi biner github-mcp-server (dipasang ke %LOCALAPPDATA%\Programs\github-mcp-server). */
+export function githubMcpBinary({ env = process.env, platform = process.platform } = {}) {
+  if (env.JOKO_GITHUB_MCP_BIN) return env.JOKO_GITHUB_MCP_BIN;
+  if (platform === 'win32' && env.LOCALAPPDATA) return path.join(env.LOCALAPPDATA, 'Programs', 'github-mcp-server', 'github-mcp-server.exe');
+  return 'github-mcp-server';
+}
 
 const byId = (id) => CONNECTORS.find(c => c.id === id) || null;
 
@@ -108,6 +127,12 @@ export function connectorEntry(id, secrets = {}, { platform = process.platform }
       ? { command: 'cmd', args: ['/c', 'npx', '-y', c.pkg] }
       : { command: 'npx', args: ['-y', c.pkg] };
     return { disabled: false, ...npx, env: { [c.envKey]: apiKey } };
+  }
+  if (c.auth === 'github-pat') {
+    const token = String(secrets.apiKey || '').trim();
+    // Wajib token fine-grained (github_pat_...) agar izin bisa dibatasi Read-only per repo.
+    if (!/^github_pat_[A-Za-z0-9_]{40,}$/.test(token)) throw new ConnectorError('Token harus fine-grained (diawali github_pat_). Token klasik (ghp_) tidak bisa dibatasi baca saja.');
+    return { disabled: false, command: secrets.binary || githubMcpBinary({ platform }), args: [...c.args], env: { [c.envKey]: token } };
   }
   throw new ConnectorError(`cara login tidak dikenal: ${c.auth}`);
 }
@@ -202,7 +227,7 @@ export function connectorStatus({ config, cacheDir, allowed = {} }) {
     const cache = entry ? cachedTools(cacheDir, c.id) : null;
     const credentials = !entry ? false
       : c.auth === 'google-oauth' || c.auth === 'oauth-client' ? !!entry.oauth?.clientId && !!entry.oauth?.clientSecret
-      : c.auth === 'api-key' ? !!entry.env?.[c.envKey]
+      : c.auth === 'api-key' || c.auth === 'github-pat' ? !!entry.env?.[c.envKey]
       : true;
     return {
       id: c.id, label: c.label, group: c.group, summary: c.summary, safety: c.safety,

@@ -110,3 +110,21 @@ test('buildAgyCliArgs: aturan deny ikut di --settings dan divalidasi', () => {
   const b = buildAgyCliArgs({ prompt: 'p', timeoutMs: 60000, allowMcpServers: ['joko'] });
   assert.equal(JSON.parse(b[b.indexOf('--settings') + 1]).permissions.deny, undefined);
 });
+
+test('connector GitHub: baca saja, wajib token fine-grained, kredensial terdeteksi', () => {
+  const c = CONNECTORS.find(x => x.id === 'github');
+  assert.ok(c.args.includes('--read-only'));
+  assert.ok(c.args.includes('--lockdown-mode'));
+  assert.deepEqual(CONNECTOR_GROUPS.github, ['github']);
+  const tok = 'github_pat_' + 'A'.repeat(60);
+  const e = connectorEntry('github', { apiKey: tok, binary: 'C:/x/github-mcp-server.exe' });
+  assert.equal(e.command, 'C:/x/github-mcp-server.exe');
+  assert.ok(e.args.includes('--read-only'));
+  assert.equal(e.env.GITHUB_PERSONAL_ACCESS_TOKEN, tok);
+  assert.throws(() => connectorEntry('github', { apiKey: 'ghp_' + 'A'.repeat(36) }), /fine-grained/);
+  assert.throws(() => connectorEntry('github', { apiKey: '' }), /fine-grained/);
+  const st = connectorStatus({ config: { mcpServers: { github: e } }, cacheDir: path.join(os.tmpdir(), 'tidak-ada') }).find(s => s.id === 'github');
+  assert.equal(st.installed, true);
+  assert.equal(st.credentials, true);
+  assert.equal(JSON.stringify(st).includes(tok), false, 'token tidak bocor ke status panel');
+});
