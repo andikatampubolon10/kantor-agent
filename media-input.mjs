@@ -28,8 +28,21 @@ const EXTENSIONS = {
   'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif',
   'audio/ogg': '.ogg', 'audio/opus': '.ogg', 'audio/mpeg': '.mp3', 'audio/mp3': '.mp3',
   'audio/mp4': '.m4a', 'audio/aac': '.aac', 'audio/x-m4a': '.m4a', 'audio/wav': '.wav', 'audio/x-wav': '.wav',
-  'audio/amr': '.amr', 'audio/webm': '.webm'
+  'audio/amr': '.amr', 'audio/webm': '.webm', 'audio/flac': '.flac', 'audio/x-flac': '.flac',
+  // Video & file audio/video yang dikirim sebagai dokumen -> hanya untuk transkripsi (owner)
+  'video/mp4': '.mp4', 'video/quicktime': '.mov', 'video/webm': '.webm', 'video/x-matroska': '.mkv',
+  'video/3gpp': '.3gp', 'video/x-msvideo': '.avi', 'audio/x-ms-wma': '.wma'
 };
+
+/**
+ * Media yang masuk jalur TRANSKRIPSI (bukan "didengar" langsung oleh model):
+ * video apa pun, file audio (bukan voice note), atau voice note yang lebih dari 10 menit.
+ */
+export function isTranscribable(media) {
+  if (!media) return false;
+  if (media.kind === 'video') return true;
+  return media.kind === 'audio' && (!media.ptt || (media.seconds || 0) > 10 * 60);
+}
 
 /** Ekstensi file dari mimetype WhatsApp (mis. "audio/ogg; codecs=opus"). */
 export function mediaExtension(mimetype) {
@@ -52,6 +65,20 @@ export function extractMediaInfo(msgContent) {
   if (!msgContent) return null;
   const img = msgContent.imageMessage;
   const aud = msgContent.audioMessage;
+  const vid = msgContent.videoMessage;
+  const doc = msgContent.documentMessage;
+  if (vid && !vid.gifPlayback) {
+    const mimetype = String(vid.mimetype || 'video/mp4');
+    if (!mediaExtension(mimetype)) return null;
+    return { kind: 'video', mimetype, fileLength: toNumber(vid.fileLength), seconds: toNumber(vid.seconds), ptt: false, isForwarded: !!vid.contextInfo?.isForwarded };
+  }
+  if (doc && !img && !aud) {
+    // File audio/video yang dikirim sebagai DOKUMEN (mis. rekaman rapat .mp3 / .mp4)
+    const mimetype = String(doc.mimetype || '');
+    const kind = /^video\//i.test(mimetype) ? 'video' : /^audio\//i.test(mimetype) ? 'audio' : null;
+    if (!kind || !mediaExtension(mimetype)) return null;
+    return { kind, mimetype, fileLength: toNumber(doc.fileLength), seconds: 0, ptt: false, document: true, fileName: String(doc.fileName || '').slice(0, 120), isForwarded: !!doc.contextInfo?.isForwarded };
+  }
   const node = img || aud;
   if (!node) return null;
   const mimetype = String(node.mimetype || (img ? 'image/jpeg' : 'audio/ogg; codecs=opus'));

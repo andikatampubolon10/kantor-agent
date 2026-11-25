@@ -109,8 +109,12 @@ import {
   cleanupMediaInbox,
   buildOwnerAttachmentContext,
   defaultOwnerRequest,
-  guestAttachmentNote
+  guestAttachmentNote,
+  isTranscribable,
+  mediaExtension,
+  MEDIA_INBOX_DIR
 } from './media-input.mjs';
+import { createTranscriber, TRANSCRIBE_LIMITS, fmtTime as fmtDuration } from './transcriber.mjs';
 import {
   createMemoryStore,
   renderMemoryForPrompt,
@@ -1302,7 +1306,7 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
 
         // Rekam pesan grup ke memori riwayat obrolan (hanya saat Joko aktif)
         if (isGroup && !currentJokoState.isAsleep) {
-          const mediaTag = media ? `[${media.kind === 'image' ? 'gambar' : 'voice note'}]` : '';
+          const mediaTag = media ? `[${media.kind === 'image' ? 'gambar' : media.kind === 'video' ? 'video' : media.ptt ? 'voice note' : 'audio'}]` : '';
           recordGroupMessage(rawSender, senderName, senderNumber, [mediaTag, rawMessage].filter(Boolean).join(' '));
         }
 
@@ -1318,6 +1322,10 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
         // atau grup tidak pernah diproses (privasi).
         if (!invocation.invoked && isVoiceInvocation({ media, isSelfChat, isOwner, isGroup })) {
           invocation = { invoked: true, body: '', via: 'voice' };
+        }
+        // File audio/video dari Mas Andika ke chat DIRI SENDIRI -> langsung ditranskrip (tanpa caption pun).
+        if (!invocation.invoked && isOwner && isSelfChat && !isGroup && isTranscribable(media)) {
+          invocation = { invoked: true, body: String(rawMessage || '').trim(), via: 'transkrip' };
         }
         if (!invocation.invoked) {
           return;
@@ -1399,6 +1407,17 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
         // Mode Coding: "Joko coding <proyek>: <instruksi>", "Joko coding push C3" (OWNER saja)
         if (isOwner && userPrompt && !media && await handleCodingCommand(userPrompt, targetRecipient)) {
           return;
+        }
+        // Transkripsi ala TurboScribe (OWNER saja): file audio/video yang dikirim, atau
+        // "Joko transkrip" sebagai balasan ke pesan audio/video.
+        if (isOwner) {
+          const asksTranscript = /\b(transkrip\w*|transcri\w*|tulis(kan)?\s+ulang)\b/i.test(userPrompt || '');
+          const transMedia = isTranscribable(media) ? media
+            : (!media && asksTranscript && quoted?.media && (isTranscribable(quoted.media) || quoted.media.kind === 'audio')) ? quoted.media : null;
+          if (transMedia) {
+            await handleTranscription(transMedia, { targetRecipient, instruction: userPrompt });
+            return;
+          }
         }
 
         if (isGroup) {
@@ -2166,6 +2185,60 @@ const BUILTIN_TOOLS = [
   { rule: 'read_url', label: 'Baca URL' },
   { rule: 'browser', label: 'Browser' }
 ];
+
+// ==========================================
+// TRANSKRIPSI AUDIO/VIDEO (lihat transcriber.mjs)
+// ==========================================
+const TRANSCRIPT_PERSONA = 'Kamu Joko, asisten Mas Andika yang menganalisis transkrip rekaman. Jawab hanya dengan format yang diminta.';
+const transcriber = createTranscriber({
+  workDir: path.join(MEDIA_INBOX_DIR, 'transkrip-kerja'),
+  outDir: MEDIA_OUTBOX_DIR,
+  // Jalur sendiri (bukan antrean chat): transkripsi panjang tidak membuat pesan Mas menunggu.
+  runAgent: async (prompt) => {
+    const text = await askAgyCli(prompt, { persona: TRANSCRIPT_PERSONA, routeText: 'analisis transkrip', label: 'transkrip' });
+    return { text, model: recentAgentRuns.find(r => r.label === 'transkrip')?.model || null };
+  },
+  notify: (job, text) => sendWhatsApp(job.chat, text),
+  sendFile: (job, file) => sendWhatsAppFile(job.chat, file)
+});
+
+async function handleTranscription(media, { targetRecipient, instruction = '' }) {
+  const ready = transcriber.ready();
+  if (!ready.ok) {
+    await sendWhatsApp(targetRecipient, `🎧 Mesin transkripsi Joko belum terpasang (${ready.missing.join(', ')}).\nJalankan *pasang-transkrip.bat* di laptop (sekali saja, ±730 MB), lalu kirim ulang filenya.`);
+    return;
+  }
+  if (media.fileLength && media.fileLength > TRANSCRIBE_LIMITS.maxBytes) {
+    await sendWhatsApp(targetRecipient, `⚠️ File terlalu besar (${Math.round(media.fileLength / 1024 / 1024)} MB). Batas transkripsi ${TRANSCRIBE_LIMITS.maxBytes / 1024 / 1024 / 1024} GB.`);
+    return;
+  }
+  if (media.seconds && media.seconds > TRANSCRIBE_LIMITS.maxSeconds) {
+    await sendWhatsApp(targetRecipient, `⚠️ Durasi ${fmtDuration(media.seconds)} melebihi batas ${TRANSCRIBE_LIMITS.maxSeconds / 3600} jam.`);
+    return;
+  }
+  const ext = mediaExtension(media.mimetype) || (media.kind === 'video' ? '.mp4' : '.mp3');
+  const file = path.join(MEDIA_INBOX_DIR, `${new Date().toISOString().slice(0, 10)}-transkrip-${crypto.randomBytes(6).toString('hex')}${ext}`);
+  try {
+    fs.mkdirSync(MEDIA_INBOX_DIR, { recursive: true });
+    if (media.downloadToFile) await media.downloadToFile(file, TRANSCRIBE_LIMITS.maxBytes);
+    else fs.writeFileSync(file, await media.download());
+  } catch (err) {
+    fs.rm(file, { force: true }, () => {});
+    await sendWhatsApp(targetRecipient, `⚠️ File gagal diunduh dari WhatsApp: ${err.message}`);
+    return;
+  }
+  const extra = String(instruction || '').replace(/\b(tolong|joko|transkrip\w*|transcri\w*|tulis(kan)?\s+ulang|dong|ya|file|ini|video|audio|rekaman)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  const fileName = media.fileName || `${media.kind === 'video' ? 'video' : 'audio'}-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}${ext}`;
+  try {
+    const { job, ahead } = transcriber.start({ source: file, fileName, chat: targetRecipient, instruction: extra.length >= 4 ? instruction : '' });
+    const eta = media.seconds ? ` Durasi ${fmtDuration(media.seconds)}, perkiraan selesai ±${transcriber.estimateMinutes(media.seconds)} menit.` : '';
+    console.log(`[Transkrip] 📥 ${job.id} diterima: ${fileName} (${media.kind}${media.document ? ', dokumen' : ''})`);
+    await sendWhatsApp(targetRecipient, `🎧 Siap Mas, *${fileName}* Joko transkrip${ahead ? ` (antre, ${ahead} di depan)` : ''}.${eta}\nHasilnya: ringkasan di chat + file *.txt* berisi analisis AI & transkrip lengkap dengan timestamp.`);
+  } catch (err) {
+    fs.rm(file, { force: true }, () => {});
+    await sendWhatsApp(targetRecipient, `⚠️ ${err.message}`);
+  }
+}
 
 // ==========================================
 // MODE CODING (lihat coding-mode.mjs)

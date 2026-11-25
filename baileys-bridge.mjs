@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import pino from 'pino';
+import { pipeline } from 'node:stream/promises';
 import { extractMediaInfo } from './media-input.mjs';
 import { extractQuotedInfo } from './reply-context.mjs';
 
@@ -396,7 +397,18 @@ export async function initBaileys({ onMessage, ownerNumber = DEFAULT_OWNER_NUMBE
           download: () => downloadMediaMessage(m, 'buffer', {}, {
             logger: pino({ level: 'silent' }),
             reuploadRequest: thisSock.updateMediaMessage
-          })
+          }),
+          // Video/rekaman besar: alirkan langsung ke file (tidak ditampung utuh di RAM).
+          downloadToFile: async (file, maxBytes) => {
+            const stream = await downloadMediaMessage(m, 'stream', {}, {
+              logger: pino({ level: 'silent' }),
+              reuploadRequest: thisSock.updateMediaMessage
+            });
+            let total = 0;
+            if (maxBytes) stream.on('data', (c) => { total += c.length; if (total > maxBytes) stream.destroy(new Error('Ukuran file melebihi batas.')); });
+            await pipeline(stream, fs.createWriteStream(file));
+            return total;
+          }
         } : null;
 
         // Chat dengan diri sendiri ("Message yourself"): pesan dari HP Mas Andika ke nomornya sendiri.
