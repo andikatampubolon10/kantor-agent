@@ -207,12 +207,12 @@ export function createAdminPanel({
       return send(res, 200, { ...info, url, qrSvg: remote.qr ? remote.qr(`${url}#token=${token}`) : null });
     }
     if (method === 'GET' && api === 'pairing') return send(res, 200, getPairing());
-    if (method === 'GET' && api === 'models') return send(res, 200, getModelInfo());
+    if (method === 'GET' && api === 'models') return send(res, 200, await getModelInfo({ refresh: url.searchParams.get('refresh') === '1' }));
     if (method === 'POST' && api === 'models') {
       const body = await readBody(req);
       try { saveModelSettings(body.reset ? null : body.settings || {}); }
       catch (err) { throw new HttpError(400, err.message); }
-      return send(res, 200, getModelInfo());
+      return send(res, 200, await getModelInfo());
     }
     if (method === 'POST' && api === 'models/test') {
       const body = await readBody(req);

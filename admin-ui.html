@@ -506,6 +506,8 @@ dialog.wide { width: min(620px, calc(100vw - 32px)); max-width: none; }
         <div><h1>Model &amp; Routing</h1><p class="sub">Pilih model untuk tiap jenis permintaan. Perubahan berlaku untuk pesan berikutnya, tanpa mulai ulang.</p></div>
         <span class="pill" id="modelSource">—</span>
       </div>
+      <div class="row small" style="margin:0 0 14px;justify-content:space-between"><span id="modelLive" class="muted"></span><button class="btn sm" type="button" id="modelRefresh">Muat ulang daftar model</button></div>
+      <div id="modelWarn"></div>
       <div class="grid g2">
         <form class="card stack" id="modelForm" autocomplete="off">
           <div>
@@ -1261,6 +1263,11 @@ function renderModels(info) {
   src.textContent = info.saved ? 'Diatur dari panel' : 'Memakai bawaan';
   src.className = 'pill ' + (info.saved ? 'ok' : '');
   $('#resetModel').disabled = !info.saved;
+  $('#modelLive').innerHTML = info.live
+    ? `<span class="pill ok">Live</span> ${info.known.length} model dari Antigravity CLI · diperbarui ${ago(info.liveAt)}`
+    : `<span class="pill warn">Daftar bawaan</span> Antigravity tidak bisa dihubungi${info.liveError ? ': ' + esc(info.liveError) : ''}`;
+  const SLOT = { berat: 'Model berat', ringan: 'Model ringan', cadangan: 'Model cadangan' };
+  $('#modelWarn').innerHTML = (info.unavailable || []).map(u => `<p class="small" style="margin:0 0 12px;color:var(--warn)">⚠️ ${esc(SLOT[u.slot] || u.slot)} <code>${esc(u.id)}</code> sudah tidak ada di Antigravity. Pilih model lain lalu simpan.</p>`).join('');
   const names = { file: 'Format & file', laporan: 'Jenis dokumen', analisis: 'Analisis' };
   $('#builtin').innerHTML = Object.entries(info.builtinTriggers).map(([k, words]) =>
     `<div><h3>${esc(names[k] || k)}</h3><div class="chips">${words.map(w => `<span class="chip">${esc(w)}</span>`).join('')}</div></div>`).join('');
@@ -1269,6 +1276,11 @@ async function loadModels() {
   $('#modelErr').textContent = '';
   try { renderModels(await api('models')); } catch (e) { if (e.status !== 401) $('#modelErr').textContent = e.message; }
 }
+$('#modelRefresh').onclick = async () => {
+  const b = $('#modelRefresh'); b.disabled = true; b.textContent = 'Memuat…';
+  try { renderModels(await api('models?refresh=1')); toast('Daftar model diperbarui.'); } catch (e) { toast(e.message, true); }
+  b.disabled = false; b.textContent = 'Muat ulang daftar model';
+};
 $('#fbOn').onchange = () => { $('#fbWrap').classList.toggle('hidden', !$('#fbOn').checked); testRouteSoon(); };
 $('#extraWords').oninput = () => testRouteSoon();
 $('#modelForm').addEventListener('submit', async (ev) => {

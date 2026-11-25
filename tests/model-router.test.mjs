@@ -79,3 +79,32 @@ test('argumen CLI --model hanya untuk nama model yang valid', () => {
   assert.equal(buildAgyCliArgs({ prompt: 'x', timeoutMs: 60000, model: 'x; rm -rf /' }).includes('--model'), false);
   assert.equal(buildAgyCliArgs({ prompt: 'x', timeoutMs: 60000 }).includes('--model'), false);
 });
+
+test('daftar model live: parse "agy models", gabung catatan, cari dari ketikan bebas', async () => {
+  const { parseAgyModels, mergeModelCatalog, findModel, KNOWN_MODELS } = await import('../model-router.mjs');
+  const out = 'Fetching available models...\ngemini-4-hydrogen-high\tGemini 4 Hydrogen (High)\ngemini-4-hydrogen-medium\tGemini 4 Hydrogen (Medium)\nclaude-opus-4-6-thinking\tClaude Opus 4.6 (Thinking)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n';
+  const live = parseAgyModels(out);
+  assert.deepEqual(live.map(m => m.id), ['gemini-4-hydrogen-high', 'gemini-4-hydrogen-medium', 'claude-opus-4-6-thinking', 'claude-sonnet-4-6']);
+  const cat = mergeModelCatalog(live);
+  assert.equal(cat[0].note, 'penalaran tinggi');
+  assert.equal(cat[2].note, KNOWN_MODELS.find(k => k.id === 'claude-opus-4-6-thinking').note);
+  assert.equal(mergeModelCatalog([]).length, KNOWN_MODELS.length, 'agy tidak bisa dihubungi -> daftar bawaan');
+  assert.equal(findModel('hydrogen medium', cat).model.id, 'gemini-4-hydrogen-medium');
+  assert.equal(findModel('opus', cat).model.id, 'claude-opus-4-6-thinking');
+  assert.equal(findModel('gemini-4-hydrogen-high', cat).model.id, 'gemini-4-hydrogen-high');
+  assert.deepEqual(findModel('hydrogen', cat).ambiguous.map(m => m.id), ['gemini-4-hydrogen-high', 'gemini-4-hydrogen-medium']);
+  assert.ok(findModel('gpt-5', cat).notFound);
+});
+
+test('perintah model WhatsApp', async () => {
+  const { parseModelCommand } = await import('../model-router.mjs');
+  assert.deepEqual(parseModelCommand('Joko model'), { kind: 'show' });
+  assert.deepEqual(parseModelCommand('joko, model apa yang dipakai sekarang?'), { kind: 'show' });
+  assert.deepEqual(parseModelCommand('Joko reset model'), { kind: 'reset' });
+  assert.deepEqual(parseModelCommand('Joko ganti model ringan ke hydrogen medium'), { kind: 'set', slot: 'light', query: 'hydrogen medium' });
+  assert.deepEqual(parseModelCommand('Joko pakai model berat gemini-4-hydrogen-high'), { kind: 'set', slot: 'heavy', query: 'gemini-4-hydrogen-high' });
+  assert.deepEqual(parseModelCommand('Joko ganti model semua jadi opus'), { kind: 'set', slot: 'all', query: 'opus' });
+  assert.deepEqual(parseModelCommand('Joko ganti model ke sonnet'), { kind: 'set', slot: 'light', query: 'sonnet' });
+  assert.equal(parseModelCommand('Joko jelaskan model bisnis startup'), null);
+  assert.equal(parseModelCommand('Joko buat model 3D rumah'), null);
+});

@@ -86,7 +86,7 @@ import { createAgentQueue } from './agent-queue.mjs';
 import { runAgyCli, runAgyCliLegacy, AgentTimeoutError } from './agy-cli.mjs';
 import {
   pickModel, fallbackModel, effectiveModelConfig, setModelSettings, getModelSettings,
-  normalizeModelSettings, builtinTriggers, KNOWN_MODELS
+  normalizeModelSettings, builtinTriggers, parseAgyModels, mergeModelCatalog, findModel, parseModelCommand
 } from './model-router.mjs';
 import { createAdminPanel } from './admin-panel.mjs';
 import { createTradingRunner, createIndodaxMarket } from './trading-runner.mjs';
@@ -1392,6 +1392,10 @@ async function processIncomingMessage({ rawSender, rawMessage = '', senderName =
         if (isOwner && userPrompt && !media && await handleTradingCommand(userPrompt, targetRecipient)) {
           return;
         }
+        // Model: "Joko model", "Joko ganti model ringan ke hydrogen medium", "Joko reset model" (OWNER saja)
+        if (isOwner && userPrompt && !media && await handleModelCommand(userPrompt, targetRecipient)) {
+          return;
+        }
         // Mode Coding: "Joko coding <proyek>: <instruksi>", "Joko coding push C3" (OWNER saja)
         if (isOwner && userPrompt && !media && await handleCodingCommand(userPrompt, targetRecipient)) {
           return;
@@ -1868,14 +1872,99 @@ function ownerMcp() {
 }
 loadPanelSettings();
 
-function modelInfo() {
+// Daftar model LIVE dari Antigravity CLI ("agy models"): model baru langsung muncul tanpa ubah kode.
+const agyModels = { list: [], at: 0, error: null, pending: null };
+async function refreshAgyModels({ maxAgeMs = 10 * 60 * 1000 } = {}) {
+  if (agyModels.list.length && Date.now() - agyModels.at < maxAgeMs) return agyModels.list;
+  if (agyModels.pending) return agyModels.pending;
+  agyModels.pending = execFileAsync(AGY_PATH, ['models'], { env: agyEnv(), windowsHide: true, timeout: 45000 })
+    .then(({ stdout }) => {
+      const list = parseAgyModels(stdout);
+      if (!list.length) throw new Error('daftar model kosong');
+      Object.assign(agyModels, { list, at: Date.now(), error: null });
+      return list;
+    })
+    .catch(err => { agyModels.error = String(err.message || err).slice(0, 160); console.warn(`[Model] ⚠️ Gagal mengambil daftar model agy: ${agyModels.error}`); return agyModels.list; })
+    .finally(() => { agyModels.pending = null; });
+  return agyModels.pending;
+}
+async function modelCatalog(opts) { return mergeModelCatalog(await refreshAgyModels(opts)); }
+
+async function modelInfo({ refresh = false } = {}) {
+  const known = await modelCatalog(refresh ? { maxAgeMs: 0 } : undefined);
+  const effective = effectiveModelConfig();
+  const liveIds = new Set(agyModels.list.map(m => m.id));
+  const used = [['berat', effective.heavy], ['ringan', effective.light], ...(effective.fallbackEnabled ? [['cadangan', effective.fallback]] : [])];
   return {
-    known: KNOWN_MODELS,
+    known,
+    live: agyModels.list.length > 0,
+    liveAt: agyModels.at || null,
+    liveError: agyModels.error,
+    // Model yang sedang dipakai tapi tidak ada lagi di Antigravity (mis. sudah dipensiunkan)
+    unavailable: agyModels.list.length ? used.filter(([, id]) => !liveIds.has(id)).map(([slot, id]) => ({ slot, id })) : [],
     saved: getModelSettings(),
-    effective: effectiveModelConfig(),
+    effective,
     defaults: effectiveModelConfig({ settings: null }),
     builtinTriggers: builtinTriggers()
   };
+}
+
+/** Simpan pengaturan model (panel & WhatsApp); berlaku untuk pesan berikutnya tanpa restart. */
+function applyModelSettings(input, source = 'panel') {
+  const model = input ? normalizeModelSettings(input) : null;
+  const saved = readJsonFile(SETTINGS_FILE, {}, { validate: d => d && typeof d === 'object' });
+  if (model) saved.model = model; else delete saved.model;
+  saved.updatedAt = new Date().toISOString();
+  writeJsonAtomic(SETTINGS_FILE, saved);
+  setModelSettings(model);
+  const cfg = effectiveModelConfig();
+  console.log(`[${source === 'panel' ? 'Admin' : 'Model'}] ⚙️ Pengaturan model ${model ? 'disimpan' : 'dikembalikan ke bawaan'} (${source}): berat ${cfg.heavy}, ringan ${cfg.light}, mode ${cfg.routing}, cadangan ${cfg.fallbackEnabled ? cfg.fallback : 'mati'}.`);
+  return cfg;
+}
+
+const SLOT_LABEL = { heavy: 'berat', light: 'ringan', fallback: 'cadangan' };
+async function handleModelCommand(text, targetRecipient) {
+  const cmd = parseModelCommand(text);
+  if (!cmd) return false;
+  const catalog = await modelCatalog();
+  const cfgText = (cfg) => [
+    `• Berat (analisis, dokumen, coding, trading): *${cfg.heavy}*`,
+    `• Ringan (obrolan cepat): *${cfg.light}*`,
+    `• Cadangan: ${cfg.fallbackEnabled ? `*${cfg.fallback}*` : 'mati'}`,
+    `• Mode: ${cfg.routing}`
+  ].join('\n');
+  if (cmd.kind === 'show') {
+    const info = await modelInfo();
+    const warn = info.unavailable.map(u => `⚠️ Model ${u.slot} *${u.id}* sudah tidak tersedia di Antigravity — segera ganti.`);
+    await sendWhatsApp(targetRecipient, [
+      '🧠 *Model Joko sekarang*', cfgText(info.effective), ...(warn.length ? ['', ...warn] : []),
+      '', `📋 *Tersedia${info.live ? '' : ' (daftar bawaan, agy tidak bisa dihubungi)'}:*`,
+      ...catalog.map(m => `• ${m.id} — ${m.label}`),
+      '', 'Ganti: *Joko ganti model ringan ke hydrogen medium* (slot: berat / ringan / cadangan / semua). Kembalikan: *Joko reset model*.'
+    ].join('\n'));
+    return true;
+  }
+  if (cmd.kind === 'reset') {
+    const cfg = applyModelSettings(null, 'whatsapp');
+    await sendWhatsApp(targetRecipient, `↩️ Model dikembalikan ke bawaan:\n${cfgText(cfg)}`);
+    return true;
+  }
+  const found = findModel(cmd.query, catalog);
+  if (found.ambiguous) {
+    await sendWhatsApp(targetRecipient, `Ada beberapa yang cocok dengan "${cmd.query}", sebutkan lebih spesifik:\n${found.ambiguous.map(m => `• ${m.id}`).join('\n')}`);
+    return true;
+  }
+  if (!found.model) {
+    await sendWhatsApp(targetRecipient, `Model "${cmd.query}" tidak ditemukan. Ketik *Joko model* untuk melihat daftar yang tersedia.`);
+    return true;
+  }
+  const current = { ...(getModelSettings() || {}) };
+  const slots = cmd.slot === 'all' ? ['heavy', 'light'] : [cmd.slot];
+  for (const s of slots) current[s] = found.model.id;
+  const cfg = applyModelSettings(current, 'whatsapp');
+  const tradingNote = slots.includes('heavy') ? '\n\n_Catatan: paper trading juga memakai model berat; hasil eksperimen sejak sekarang tercampur model baru._' : '';
+  await sendWhatsApp(targetRecipient, `✅ Model ${slots.map(s => SLOT_LABEL[s]).join(' & ')} sekarang *${found.model.id}* (${found.model.label}). Berlaku mulai pesan berikutnya.\n\n${cfgText(cfg)}${tradingNote}`);
+  return true;
 }
 
 // Mulai ulang lewat supervisor: tutup koneksi WA dengan rapi, lalu keluar (supervisor menyalakan lagi).
@@ -2401,16 +2490,7 @@ const adminPanel = createAdminPanel({
     if (!res.ok) throw Object.assign(new Error(res.reason === 'file tidak ditemukan' ? 'File sudah tidak ada (file kiriman dihapus otomatis setelah 24 jam).' : `File tidak bisa dibuka: ${res.reason}.`), { status: 404 });
     return res;
   },
-  saveModelSettings: (input) => {
-    const model = input ? normalizeModelSettings(input) : null;
-    const saved = readJsonFile(SETTINGS_FILE, {}, { validate: d => d && typeof d === 'object' });
-    if (model) saved.model = model; else delete saved.model;
-    saved.updatedAt = new Date().toISOString();
-    writeJsonAtomic(SETTINGS_FILE, saved);
-    setModelSettings(model);
-    const cfg = effectiveModelConfig();
-    console.log(`[Admin] ⚙️ Pengaturan model ${model ? 'disimpan' : 'dikembalikan ke bawaan'}: berat ${cfg.heavy}, ringan ${cfg.light}, mode ${cfg.routing}, cadangan ${cfg.fallbackEnabled ? cfg.fallback : 'mati'}.`);
-  },
+  saveModelSettings: (input) => { applyModelSettings(input, 'panel'); },
   testRoute: (text, draft) => pickModel(text, draft ? { settings: normalizeModelSettings(draft) } : {}),
   actions: {
     'test-send': async () => {

@@ -23,6 +23,57 @@ export const KNOWN_MODELS = [
 ];
 
 export const MODEL_NAME_RE = /^[A-Za-z0-9._-]{1,80}$/;
+
+/** Keluaran `agy models` ("<id>\t<label>" per baris) -> [{ id, label }] */
+export function parseAgyModels(text) {
+  return String(text || '').split(/\r?\n/)
+    .map(l => l.match(/^\s*([A-Za-z0-9._-]{1,80})\s*\t\s*(.+?)\s*$/))
+    .filter(Boolean)
+    .map(m => ({ id: m[1], label: m[2] }));
+}
+
+/** Daftar model live dari Antigravity (urutan aslinya), diberi catatan bila dikenal; kosong -> daftar bawaan. */
+export function mergeModelCatalog(live, known = KNOWN_MODELS) {
+  if (!live?.length) return known.map(k => ({ ...k, live: false }));
+  const note = (id) => known.find(k => k.id === id)?.note
+    || (/xhigh/.test(id) ? 'penalaran terdalam, paling lambat' : /-high$/.test(id) ? 'penalaran tinggi' : /-medium$/.test(id) ? 'seimbang' : /-low$/.test(id) ? 'tercepat' : 'model baru');
+  return live.map(m => ({ id: m.id, label: m.label, note: note(m.id), live: true }));
+}
+
+const tokens = (s) => String(s || '').toLowerCase().replace(/[()]/g, ' ').split(/[\s._-]+/).filter(Boolean);
+
+/**
+ * Cari model dari ketikan bebas ("hydrogen medium", "opus", "gemini-4-hydrogen-high").
+ * -> { model } | { ambiguous: [...] } | { notFound: true }
+ */
+export function findModel(query, models) {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return { notFound: true };
+  const exact = models.find(m => m.id.toLowerCase() === q);
+  if (exact) return { model: exact };
+  const qt = tokens(q);
+  const hits = models.filter(m => { const t = new Set([...tokens(m.id), ...tokens(m.label)]); return qt.every(x => t.has(x) || [...t].some(y => y.startsWith(x) && x.length >= 3)); });
+  if (hits.length === 1) return { model: hits[0] };
+  if (hits.length > 1) return { ambiguous: hits };
+  return { notFound: true };
+}
+
+/**
+ * Perintah WhatsApp owner:
+ *   "Joko model" / "model apa" / "daftar model"           -> { kind: 'show' }
+ *   "Joko ganti model ringan ke hydrogen medium"          -> { kind: 'set', slot: 'light', query }
+ *   slot: berat | ringan | cadangan | semua (tanpa slot = ringan)
+ *   "Joko reset model" / "model bawaan"                    -> { kind: 'reset' }
+ */
+export function parseModelCommand(text) {
+  const t = String(text || '').trim().replace(/^[!/]?joko[,:\s]+/i, '').replace(/[.!?]+$/, '').trim();
+  if (/^((status|daftar|cek|lihat)\s+)?model(\s+(apa|sekarang|yang\s+dipakai))?$/i.test(t) || /^model\s+apa\s+(yang\s+)?(dipakai|sekarang)/i.test(t)) return { kind: 'show' };
+  if (/^(reset|kembalikan)\s+model(\s+ke)?(\s+bawaan)?$|^model\s+bawaan$/i.test(t)) return { kind: 'reset' };
+  const m = t.match(/^(?:ganti|pakai|ubah|set|gunakan)\s+model\s+(?:(berat|ringan|cadangan|semua)\s+)?(?:ke\s+|jadi\s+|=\s*)?(.+)$/i);
+  if (!m) return null;
+  const slot = { berat: 'heavy', ringan: 'light', cadangan: 'fallback', semua: 'all' }[String(m[1] || 'ringan').toLowerCase()];
+  return { kind: 'set', slot, query: m[2].trim() };
+}
 export const ROUTING_MODES = ['otomatis', 'ringan', 'berat'];
 
 // Kata kunci dicocokkan sebagai kata utuh (huruf kecil). Urutan = prioritas alasan di log.
